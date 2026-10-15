@@ -1,0 +1,804 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0b0f19">
+  <title>The Stimboard</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+
+
+<meta property="og:title" content="Classified Audio Archive">
+<meta property="og:description" content="Do not tap this link.">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --text-main: #f8fafc;
+      --text-sub: #94a3b8;
+      --case-accent: #ef4444;
+      --trumpet-gold: #f59e0b;
+      --trumpet-glow: rgba(245, 158, 11, 0.4);
+    }
+
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 16px 12px 48px;
+    }
+
+
+    #confettiCanvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 999;
+    }
+
+
+    .app-container {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 6px;
+    }
+
+
+    header h1 {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      text-transform: uppercase;
+      color: #e2e8f0;
+    }
+
+
+    .pill {
+      font-size: 0.72rem;
+      background: #1e293b;
+      border: 1px solid #334155;
+      padding: 4px 8px;
+      border-radius: 999px;
+      color: #38bdf8;
+      font-weight: 600;
+    }
+
+
+    button {
+      border: none;
+      background: none;
+      font-family: inherit;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+      transition: transform 0.08s ease, filter 0.08s ease;
+    }
+
+
+    button:active {
+      transform: scale(0.96);
+      filter: brightness(1.15);
+    }
+
+
+    /* 1. HERO CARD: CASE */
+    .hero-card {
+      background: linear-gradient(145deg, #1e293b, #111827);
+      border: 2px solid var(--case-accent);
+      border-radius: 20px;
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 8px 24px -6px rgba(239, 68, 68, 0.3);
+      position: relative;
+      overflow: hidden;
+    }
+
+
+    .hero-avatar-wrapper {
+      position: relative;
+      width: 72px;
+      height: 72px;
+      flex-shrink: 0;
+    }
+
+
+    .hero-avatar {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid #fff;
+      background: #334155;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+    }
+
+
+    .hero-pulse-ring {
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      border: 2px solid var(--case-accent);
+      opacity: 0;
+    }
+
+
+    .hero-card.playing .hero-pulse-ring {
+      animation: pulse-ring 0.8s ease-out infinite;
+    }
+
+
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 1; }
+      100% { transform: scale(1.4); opacity: 0; }
+    }
+
+
+    .hero-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+
+    .hero-title {
+      font-size: 1.6rem;
+      font-weight: 900;
+      letter-spacing: -0.01em;
+      color: #f87171;
+    }
+
+
+    .hero-sub {
+      font-size: 0.85rem;
+      color: var(--text-sub);
+    }
+
+
+    /* 2. FEATURED CARD: THE TRUMPET */
+    .featured-card {
+      background: linear-gradient(135deg, #78350f, #b45309, #d97706);
+      border: 2px solid #fbbf24;
+      border-radius: 20px;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 10px 28px -4px var(--trumpet-glow);
+    }
+
+
+    .featured-content {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+
+    .featured-title {
+      font-size: 1.45rem;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+      color: #fff;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.4);
+    }
+
+
+    .featured-sub {
+      font-size: 0.85rem;
+      color: #fef3c7;
+      font-weight: 500;
+    }
+
+
+    .featured-icon {
+      font-size: 2.4rem;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.3));
+    }
+
+
+    /* 3. DYNAMIC 2-COLUMN GRID */
+    .sound-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+
+    .stim-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 94px;
+      justify-content: space-between;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+
+    .stim-icon {
+      font-size: 1.5rem;
+    }
+
+
+    .stim-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+
+    .stim-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text-main);
+      line-height: 1.25;
+    }
+
+
+    .stim-sub {
+      font-size: 0.75rem;
+      color: var(--text-sub);
+      line-height: 1.2;
+    }
+
+
+    footer {
+      text-align: center;
+      font-size: 0.78rem;
+      color: #64748b;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+
+
+  <canvas id="confettiCanvas"></canvas>
+
+
+  <main class="app-container">
+    <header>
+<button id="installBtn" style="display:none; background:#2563eb; color:#fff; font-size:0.8rem; font-weight:700; padding:6px 12px; border-radius:8px; align-self:center;">
+  📲 Install Stimboard App
+</button>
+      <h1>The Stimboard</h1>
+      <span class="pill" id="slotCounter">8 Stims</span>
+    </header>
+
+
+    <div id="heroSlot"></div>
+    <div id="featuredSlot"></div>
+    <div class="sound-grid" id="soundGrid"></div>
+
+
+    <footer>
+      Tap 3 dots &rarr; "Add to Home screen" for the full app experience
+    </footer>
+  </main>
+
+
+  <script>
+    /* =====================================================================
+       1. DATA SPECIFICATION
+       Set audio to null or file path. If file path fails or is null,
+       the synthesized engine executes automatically.
+       ===================================================================== */
+    const SOUNDBOARD_DATA = [
+      {
+        id: "case",
+        type: "hero",
+        title: "CASE!",
+        subtitle: "High-priority summon",
+        image: null, // Drop photo path here
+        audio: null, // "assets/audio/case.mp3"
+        vibrate: [220],
+        active: true
+      },
+      {
+        id: "the-trumpet",
+        type: "featured",
+        title: "THE TRUMPET! 🎺🎺",
+        subtitle: "Mambo No. 5 (Full Solo Burst)",
+        icon: "🎺",
+        audio: null,
+        confetti: true,
+        vibrate: [100, 50, 100, 50, 300],
+        active: true
+      },
+      {
+        id: "trumpet-short",
+        title: "TRUMPET 🎺",
+        subtitle: "Mambo No. 5 (Quick hit)",
+        icon: "🎺",
+        audio: null,
+        vibrate: [80],
+        active: true
+      },
+      {
+        id: "barney-gumbled",
+        title: "Barney Gumbled",
+        subtitle: "Million quid / Selekta",
+        icon: "🇬🇧",
+        audio: null,
+        vibrate: [60, 40, 60],
+        active: true
+      },
+      {
+        id: "fight-overheard",
+        title: "FUCK WITH ME BITCH",
+        subtitle: "Vacation balcony classic",
+        icon: "🥊",
+        audio: null,
+        vibrate: [150, 50, 150],
+        active: true
+      },
+      {
+        id: "big-sean",
+        title: "I don't. Fuck wit. CHU!",
+        subtitle: "Big Sean cadence",
+        icon: "😤",
+        audio: null,
+        vibrate: [100, 80, 100, 80, 250],
+        active: true
+      },
+      {
+        id: "follow-the-rules",
+        title: "Follow 👏 The 👏 Rules 👏",
+        subtitle: "Sister enforcement mode",
+        icon: "👏",
+        audio: null,
+        vibrate: [50, 50, 50, 50, 50, 50, 50, 50, 50],
+        active: true
+      },
+      {
+        id: "dirty-south",
+        title: "Dirty South di-di-dirty",
+        subtitle: "Timbaland beatbox riff",
+        icon: "🎧",
+        audio: null,
+        vibrate: [70, 30, 70, 30, 120],
+        active: true
+      }
+    ];
+
+
+    /* =====================================================================
+       2. PROCEDURAL SOUND SYNTHESIS & SPEECH SYNTHESIS ENGINE
+       ===================================================================== */
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContextClass();
+
+
+    function speakText(text, rate = 1.0, pitch = 1.0, volume = 1.0) {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = rate;
+        utterance.pitch = pitch;
+        utterance.volume = volume;
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+
+
+    // Brass Synth: Sawtooth through resonant lowpass filter
+    function playBrassNote(freq, startTime, duration) {
+      const osc = audioCtx.createOscillator();
+      const filter = audioCtx.createBiquadFilter();
+      const gain = audioCtx.createGain();
+
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, startTime);
+
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(800, startTime);
+      filter.frequency.exponentialRampToValueAtTime(3200, startTime + 0.06);
+      filter.frequency.exponentialRampToValueAtTime(1400, startTime + duration);
+
+
+      gain.gain.setValueAtTime(0.001, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.4, startTime + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+
+
+      osc.start(startTime);
+      osc.stop(startTime + duration);
+    }
+
+
+    // Acoustic Handclap Generator
+    function playClap(startTime) {
+      const bufferSize = audioCtx.sampleRate * 0.08;
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+
+
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = buffer;
+
+
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1100;
+
+
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.7, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.08);
+
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+
+
+      noise.start(startTime);
+      noise.stop(startTime + 0.08);
+    }
+
+
+    // 808 Sub-Bass Impact
+    function playSubDrop(startTime, startFreq = 160, endFreq = 40, dur = 0.4) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(startFreq, startTime);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, startTime + dur);
+
+
+      gain.gain.setValueAtTime(0.6, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + dur);
+
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+
+      osc.start(startTime);
+      osc.stop(startTime + dur);
+    }
+
+
+    // Timbaland Stutter Beatbox
+    function playTimbalandRiff(startTime) {
+      for (let i = 0; i < 4; i++) {
+        const t = startTime + (i * 0.09);
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(220 - (i * 25), t);
+        osc.frequency.exponentialRampToValueAtTime(60, t + 0.07);
+
+
+        gain.gain.setValueAtTime(0.5, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + 0.07);
+      }
+    }
+
+
+    // Reroutes procedural sound based on the stim ID
+    function playProceduralSound(id) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const now = audioCtx.currentTime;
+
+
+      switch (id) {
+        case "case":
+          playSubDrop(now, 220, 45, 0.4);
+          speakText("CASE!", 1.15, 1.4, 1.0);
+          break;
+
+
+        case "trumpet-short":
+          // Quick Latin brass hit: D5 -> A5
+          playBrassNote(587.33, now, 0.12);
+          playBrassNote(880.00, now + 0.12, 0.35);
+          break;
+
+
+        case "the-trumpet":
+          // Spoken cue + Mambo No. 5 Solo Burst
+          speakText("The Trumpet!", 1.3, 1.2, 1.0);
+          const t0 = now + 0.45;
+          const notes = [
+            { f: 587.33, d: 0.12 }, // D5
+            { f: 659.25, d: 0.12 }, // E5
+            { f: 783.99, d: 0.15 }, // G5
+            { f: 880.00, d: 0.18 }, // A5
+            { f: 783.99, d: 0.12 }, // G5
+            { f: 880.00, d: 0.12 }, // A5
+            { f: 1046.5, d: 0.42 }  // C6 (Accent)
+          ];
+          let offset = 0;
+          notes.forEach(n => {
+            playBrassNote(n.f, t0 + offset, n.d);
+            offset += n.d * 0.95;
+          });
+          break;
+
+
+        case "barney-gumbled":
+          speakText("Million quid to get your Barney Gumbled!", 1.1, 1.0);
+          // UK Garage 2-step bass wobble
+          for (let i = 0; i < 3; i++) {
+            playSubDrop(now + (i * 0.18), 110, 45, 0.16);
+          }
+          break;
+
+
+        case "fight-overheard":
+          playSubDrop(now, 260, 50, 0.35);
+          speakText("Fuck with me, bitch!", 1.25, 1.3);
+          break;
+
+
+        case "big-sean":
+          speakText("I don't. Fuck wit. CHU!", 1.0, 1.1);
+          [0, 0.28, 0.58, 0.95].forEach(delay => {
+            playSubDrop(now + delay, 140, 40, 0.22);
+          });
+          break;
+
+
+        case "follow-the-rules":
+          speakText("You gotta follow the rules!", 1.0, 1.1);
+          // Clapping pattern
+          [0.2, 0.42, 0.64, 0.86, 1.08].forEach(t => playClap(now + t));
+          break;
+
+
+        case "dirty-south":
+          speakText("Dirty South! Di-di-dirty dirty.", 1.2, 0.95);
+          playTimbalandRiff(now + 0.3);
+          break;
+      }
+    }
+
+
+    let currentAudio = null;
+    function triggerStim(item, el) {
+      if (item.vibrate && 'vibrate' in navigator) {
+        navigator.vibrate(item.vibrate);
+      }
+      if (item.confetti) {
+        burstConfetti();
+      }
+      if (item.type === 'hero' && el) {
+        el.classList.add('playing');
+        setTimeout(() => el.classList.remove('playing'), 800);
+      }
+
+
+      if (item.audio) {
+        if (currentAudio) currentAudio.pause();
+        currentAudio = new Audio(item.audio);
+        currentAudio.play().catch(() => playProceduralSound(item.id));
+      } else {
+        playProceduralSound(item.id);
+      }
+    }
+
+
+    /* =====================================================================
+       3. ZERO-DEPENDENCY CONFETTI ENGINE
+       ===================================================================== */
+    const canvas = document.getElementById('confettiCanvas');
+    const ctx = canvas.getContext('2d');
+    let particles = [];
+
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+
+    function burstConfetti() {
+      const colors = ['#f59e0b', '#fbbf24', '#f87171', '#38bdf8', '#34d399'];
+      for (let i = 0; i < 75; i++) {
+        particles.push({
+          x: canvas.width / 2,
+          y: canvas.height / 3,
+          vx: (Math.random() - 0.5) * 14,
+          vy: (Math.random() - 0.7) * 16,
+          size: Math.random() * 8 + 4,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          rotation: Math.random() * 360,
+          rotSpeed: (Math.random() - 0.5) * 10,
+          opacity: 1
+        });
+      }
+    }
+
+
+    function renderConfetti() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particles.forEach((p, idx) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.45;
+        p.rotation += p.rotSpeed;
+        p.opacity -= 0.012;
+
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate((p.rotation * Math.PI) / 180);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = Math.max(p.opacity, 0);
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+        ctx.restore();
+
+
+        if (p.opacity <= 0 || p.y > canvas.height) {
+          particles.splice(idx, 1);
+        }
+      });
+      requestAnimationFrame(renderConfetti);
+    }
+    renderConfetti();
+
+
+    /* =====================================================================
+       4. MOUNTING & DYNAMIC RENDERING
+       ===================================================================== */
+    const heroSlot = document.getElementById('heroSlot');
+    const featuredSlot = document.getElementById('featuredSlot');
+    const soundGrid = document.getElementById('soundGrid');
+    const slotCounter = document.getElementById('slotCounter');
+
+
+    const activeStims = SOUNDBOARD_DATA.filter(item => item.active);
+    slotCounter.textContent = `${activeStims.length} Stims`;
+
+
+    activeStims.forEach(item => {
+      if (item.type === 'hero') {
+        const heroBtn = document.createElement('button');
+        heroBtn.className = 'hero-card';
+        const imgMarkup = item.image 
+          ? `<img src="${item.image}" alt="${item.title}" class="hero-avatar">`
+          : `<div class="hero-avatar">👩</div>`;
+
+
+        heroBtn.innerHTML = `
+          <div class="hero-avatar-wrapper">
+            ${imgMarkup}
+            <div class="hero-pulse-ring"></div>
+          </div>
+          <div class="hero-info">
+            <span class="hero-title">${item.title}</span>
+            <span class="hero-sub">${item.subtitle}</span>
+          </div>
+        `;
+        heroBtn.addEventListener('click', () => triggerStim(item, heroBtn));
+        heroSlot.appendChild(heroBtn);
+
+
+      } else if (item.type === 'featured') {
+        const featBtn = document.createElement('button');
+        featBtn.className = 'featured-card';
+        featBtn.innerHTML = `
+          <div class="featured-content">
+            <span class="featured-title">${item.title}</span>
+            <span class="featured-sub">${item.subtitle}</span>
+          </div>
+          <span class="featured-icon">${item.icon || "🎺"}</span>
+        `;
+        featBtn.addEventListener('click', () => triggerStim(item, featBtn));
+        featuredSlot.appendChild(featBtn);
+
+
+      } else {
+        const gridBtn = document.createElement('button');
+        gridBtn.className = 'stim-card';
+        gridBtn.innerHTML = `
+          <span class="stim-icon">${item.icon || "🔊"}</span>
+          <div class="stim-text">
+            <span class="stim-title">${item.title}</span>
+            <span class="stim-sub">${item.subtitle}</span>
+          </div>
+        `;
+        gridBtn.addEventListener('click', () => triggerStim(item, gridBtn));
+        soundGrid.appendChild(gridBtn);
+      }
+    });
+// 1. Register Service Worker
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('SW Registered', reg.scope))
+      .catch(err => console.error('SW Error', err));
+  });
+}
+
+
+// 2. Intercept Android Chrome's Install Prompt
+let deferredPrompt;
+const installBtn = document.getElementById('installBtn');
+
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Prevent Chrome from displaying the mini-infobar immediately
+  e.preventDefault();
+  deferredPrompt = e;
+  // Show the custom in-app button
+  installBtn.style.display = 'block';
+});
+
+
+installBtn.addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  // Trigger native Android install modal
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  if (outcome === 'accepted') {
+    installBtn.style.display = 'none';
+  }
+  deferredPrompt = null;
+});
+
+
+window.addEventListener('appinstalled', () => {
+  installBtn.style.display = 'none';
+});
+  </script>
+</body>
+</html>
