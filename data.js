@@ -5,7 +5,7 @@
 // 1. Check if today is October 23rd
 const today = new Date();
 // Note: JavaScript months are 0-indexed, so 9 = October
-const isBirthday = (today.getMonth() === 9 && today.getDate() === 23);
+const isBirthday = true // (today.getMonth() === 9 && today.getDate() === 23);
 
 window.SOUNDBOARD_DATA = [
   // --- 1. HERO CARD ---
