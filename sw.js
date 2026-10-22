@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stimboard-modular-v5';
+const CACHE_NAME = 'stimboard-modular-v6';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
