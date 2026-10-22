@@ -186,7 +186,7 @@ window.playProceduralSound = function(id, skipVocals = false) {
 
   switch (id) {
     case "birthday-surprise":
-      if (!skipVocals) speakText("Happy birthday to you! Happy birthday to you! Happy birthday dear Case! Happy birthday to you!", 1.0, 1.2, 1.0);
+      if (!skipVocals) speakText("Happy birthday to you! Happy birthday to you! Happy birthday dear CASE! Happy birthday to you!", 1.0, 1.2, 1.0);
       
       // Happy Birthday 6-note brass melody
       const bdayNotes = [
@@ -197,9 +197,12 @@ window.playProceduralSound = function(id, skipVocals = false) {
         { f: 349.23, d: 0.3 }, // F4
         { f: 329.63, d: 0.6 } // E4
       ];
-      let bOffset = 0;
+      let bOffset = 0.5;
       bdayNotes.forEach(n => {
-        playBrassNote(n.f, now + bOffset, n.d);
+        // Play a rich 3-part major chord instead of a single note
+        playBrassNote(n.f, now + bOffset, n.d); // Root note
+        playBrassNote(n.f * 1.25, now + bOffset, n.d); // Major 3rd
+        playBrassNote(n.f * 1.5, now + bOffset, n.d); // Perfect 5th
         bOffset += n.d + 0.05;
       });
       break;

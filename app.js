@@ -55,15 +55,22 @@ resizeCanvas();
 
 function burstConfetti() {
   if (!canvas) return;
-  const colors = ['#f59e0b', '#fbbf24', '#f87171', '#38bdf8', '#34d399'];
+  const colors = ['#f59e0b', '#fbbf24', '#f87171', '#38bdf8', '#34d399', '#c026d3'];
+  const emojis = ['🎈', '✨', '🎂', '🎉'];
+  
   for (let i = 0; i < 75; i++) {
+    // 20% chance of being an emoji instead of a colored square
+    const isEmoji = Math.random() > 0.8;
+    
     particles.push({
       x: canvas.width / 2,
       y: canvas.height / 3,
       vx: (Math.random() - 0.5) * 14,
       vy: (Math.random() - 0.7) * 16,
-      size: Math.random() * 8 + 4,
+      size: isEmoji ? Math.random() * 16 + 16 : Math.random() * 8 + 4, // Emojis are larger
       color: colors[Math.floor(Math.random() * colors.length)],
+      type: isEmoji ? 'emoji' : 'color',
+      text: isEmoji ? emojis[Math.floor(Math.random() * emojis.length)] : '',
       rotation: Math.random() * 360,
       rotSpeed: (Math.random() - 0.5) * 10,
       opacity: 1
@@ -71,25 +78,33 @@ function burstConfetti() {
   }
 }
 
+
 function renderConfetti() {
-  if (!ctx || !canvas) return;
+  if (!ctx || !canvas) return; 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
   for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-    p.x += p.vx;
-    p.y += p.vy;
-    p.vy += 0.45;
+    const p = particles[i]; 
+    p.x += p.vx; 
+    p.y += p.vy; 
+    p.vy += 0.45; 
     p.rotation += p.rotSpeed;
     p.opacity -= 0.012;
 
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate((p.rotation * Math.PI) / 180);
-    ctx.fillStyle = p.color;
-    ctx.globalAlpha = Math.max(p.opacity, 0);
-    ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+    ctx.save(); 
+    ctx.translate(p.x, p.y); 
+    ctx.rotate((p.rotation * Math.PI) / 180); 
+    ctx.globalAlpha = Math.max(p.opacity, 0); 
+    
+    if (p.type === 'emoji') {
+      ctx.font = `${p.size}px Arial`;
+      ctx.fillText(p.text, -p.size / 2, p.size / 2);
+    } else {
+      ctx.fillStyle = p.color; 
+      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size); 
+    }
+    
     ctx.restore();
-
     if (p.opacity <= 0 || p.y > canvas.height) particles.splice(i, 1);
   }
   requestAnimationFrame(renderConfetti);
@@ -100,44 +115,48 @@ renderConfetti();
 let currentAudio = null;
 
 function triggerStim(item, el) {
-  // 1. Fire Visuals & Haptics immediately
   if (item.vibrate && 'vibrate' in navigator) navigator.vibrate(item.vibrate);
-  if (item.confetti) burstConfetti();
-  if (el) {
-    el.classList.add('playing');
-    setTimeout(() => el.classList.remove('playing'), 800);
+  
+  // --- UPDATED CONFETTI LOGIC ---
+  if (item.confetti) {
+    // If confetti is a number (like 4), fire that many times. Otherwise, fire 1.
+    const burstCount = typeof item.confetti === 'number' ? item.confetti : 1;
+    for (let i = 0; i < burstCount; i++) {
+      setTimeout(burstConfetti, i * 300); // 300ms delay between each burst
+    }
+  }
+  // ------------------------------
+
+  if (el) { 
+    el.classList.add('playing'); 
+    setTimeout(() => el.classList.remove('playing'), 800); 
   }
 
-  // 2. Play Audio
   if (item.audio) {
-    if (currentAudio) {
-      currentAudio.pause();
-      currentAudio.onended = null;
-      currentAudio.onerror = null;
+    if (currentAudio) { 
+      currentAudio.pause(); 
+      currentAudio.onended = null; 
+      currentAudio.onerror = null; 
+    }
+    currentAudio = new Audio(item.audio);
+    
+    currentAudio.onerror = () => { 
+      if (window.playProceduralSound) window.playProceduralSound(item.id, false); 
+    };
+    
+    if (item.appendProcedural) { 
+      currentAudio.onended = () => { 
+        if (window.playProceduralSound) window.playProceduralSound(item.id, true); 
+      }; 
     }
     
-    currentAudio = new Audio(item.audio);
-
-    // If the MP3 file is missing/404s, fire the procedural sound instantly
-    currentAudio.onerror = () => {
-      if (window.playProceduralSound) window.playProceduralSound(item.id, false);
-    };
-
-    if (item.appendProcedural) {
-      currentAudio.onended = () => {
-        if (window.playProceduralSound) window.playProceduralSound(item.id, true);
-      };
-    }
-
     const playPromise = currentAudio.play();
-    if (playPromise !== undefined) {
-      playPromise.catch(() => {
-        // If the browser blocks playback, fall back to procedural
-        if (window.playProceduralSound) window.playProceduralSound(item.id, false);
-      });
+    if (playPromise !== undefined) { 
+      playPromise.catch(() => { 
+        if (window.playProceduralSound) window.playProceduralSound(item.id, false); 
+      }); 
     }
   } else {
-    // If audio is explicitly set to null, play procedural instantly
     if (window.playProceduralSound) window.playProceduralSound(item.id, false);
   }
 }
@@ -188,7 +207,11 @@ function renderSoundboard() {
       `;
       featBtn.addEventListener('click', () => triggerStim(item, featBtn));
       featuredSlot.appendChild(featBtn);
-
+      } else if (item.type === 'birthday' && featuredSlot) {
+      const bdayBtn = document.createElement('button'); bdayBtn.className = 'birthday-card';
+      bdayBtn.innerHTML = `<div class="birthday-content"><span class="birthday-title">${item.title}</span><span class="birthday-sub">${item.subtitle}</span></div><span class="birthday-icon">${item.icon || "🎂"}</span>`;
+      bdayBtn.addEventListener('click', () => triggerStim(item, bdayBtn));
+      featuredSlot.appendChild(bdayBtn);
     } else {
       const groupName = item.group || "Misc Stims";
       if (!groupedItems[groupName]) {
