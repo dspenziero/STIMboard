@@ -1,18 +1,3 @@
-styles.css add to bottom
-
-/* ==========================================================================
-   PWA / APP MODE OVERRIDES
-   ========================================================================== */
-
-/* Hides the "Tap 3 dots" footer when the app is installed and running natively */
-@media (display-mode: standalone) {
-  #appFooter {
-    display: none !important;
-  }
-}
-
-data.js
-
 /* ==========================================================================
    STIMboard Data Configuration (data.js)
    ========================================================================== */
