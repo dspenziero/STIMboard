@@ -29,13 +29,13 @@
     },
     {
       "name": "Misc Stims",
-      "collapsible": false,
+      "collapsible": true,
       "items": [
         "testttt"
       ]
     }
   ],
   "collapse": {
-    "Misc Stims": false
+    "Misc Stims": true
   }
 }
