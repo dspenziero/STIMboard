@@ -1,197 +1,234 @@
 /* ==========================================================================
    STIMboard Stylesheet (styles.css)
+   --------------------------------------------------------------------------
+   ROLE OF THIS FILE
+   All visual design. Mobile-first: the layout is a single centered column
+   (max 480px) that looks like a phone app even on a desktop monitor.
+   Sections, in order:
+     - :root variables (the color palette)
+     - global reset, body, confetti canvas, app container
+     - header (logo + counter pill)
+     - shared button behaviour + the Install button
+     - 1. Hero card (CASE!)      2. Featured card (The Trumpet)
+     - Birthday card (shimmer animation)
+     - 3. Groups + collapsible <details> accordion
+     - 4. Sound grid + stim cards, footer
+     - PWA / standalone-mode overrides
+   The class names here are the ones app.js assigns when it builds the DOM.
    ========================================================================== */
 
+/* CSS VARIABLES ("custom properties"). Declared on :root (the <html> element)
+   so every rule can reuse them via var(--name). Change a color here and it
+   updates everywhere that variable is used. */
 :root {
-  --bg: #0b0f19;
-  --card-bg: #1e293b;
-  --card-border: #334155;
-  --text-main: #f8fafc;
-  --text-sub: #94a3b8;
-  --case-accent: #ef4444;
-  --trumpet-gold: #f59e0b;
-  --trumpet-glow: rgba(245, 158, 11, 0.4);
-  --drg-border: #d97706;
+  --bg: #0b0f19;                          /* Page background: near-black navy. */
+  --card-bg: #1e293b;                     /* Default card fill: slate. */
+  --card-border: #334155;                 /* Default card outline: lighter slate. */
+  --text-main: #f8fafc;                   /* Primary text: almost white. */
+  --text-sub: #94a3b8;                    /* Secondary/subtitle text: muted gray-blue. */
+  --case-accent: #ef4444;                 /* Red used for the CASE! hero card. */
+  --trumpet-gold: #f59e0b;                /* Amber/gold brand color (declared; not referenced elsewhere right now). */
+  --trumpet-glow: rgba(245, 158, 11, 0.4);/* Translucent gold used for the featured card's glow. */
+  --drg-border: #d97706;                  /* Burnt orange border of the Deep Rock Galactic accordion. */
 }
 
+/* UNIVERSAL RESET: applies to every element. */
 * {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;   /* width/height INCLUDE padding and border, which makes layout math predictable. */
+  margin: 0;                /* Remove each browser's default margins... */
+  padding: 0;               /* ...and default padding, so we start from zero. */
+  user-select: none;        /* Stop text being selected on long-press (feels like an app, not a web page). */
+  -webkit-tap-highlight-color: transparent; /* Remove the gray flash Android/iOS paint on tapped elements. */
 }
 
 body {
   background-color: var(--bg);
   color: var(--text-main);
+  /* Use the phone's native UI font: Apple's on iOS, Segoe on Windows, Roboto on Android. */
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  min-height: 100vh;
-  display: flex;
-  justify-content: center;
-  padding: 16px 12px 48px;
+  min-height: 100vh;        /* At least one full screen tall so the background always fills it. */
+  display: flex;            /* Flex lets us center the app column horizontally... */
+  justify-content: center;  /* ...which is what this line does. */
+  padding: 16px 12px 48px;  /* top, left/right, bottom. Extra bottom space so the last row is not jammed at the screen edge. */
 }
 
+/* The confetti layer (see app.js section 2). */
 #confettiCanvas {
-  position: fixed;
+  position: fixed;          /* Pinned to the viewport; does not scroll with the page. */
   top: 0;
   left: 0;
-  width: 100vw;
-  height: 100vh;
-  pointer-events: none;
-  z-index: 999;
+  width: 100vw;             /* Cover the full viewport width... */
+  height: 100vh;            /* ...and height. */
+  pointer-events: none;     /* CRUCIAL: taps pass THROUGH the canvas to the buttons underneath. */
+  z-index: 999;             /* Draw above every card. */
 }
 
+/* The single centered column that holds the whole UI. */
 .app-container {
   width: 100%;
-  max-width: 480px;
+  max-width: 480px;         /* Never wider than a big phone, even on desktop. */
   display: flex;
-  flex-direction: column;
-  gap: 16px;
+  flex-direction: column;   /* Stack header, install button, cards, grids vertically... */
+  gap: 16px;                /* ...with 16px between each. */
 }
 
 /* --- HEADER --- */
 header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  justify-content: space-between; /* Logo/title on the far left, pill on the far right. */
+  align-items: center;            /* Vertically center both. */
   padding: 4px 6px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 10px;                /* Space between the trumpet icon and the "STIMBOARD" text. */
 }
 
 .brand-icon {
   width: 34px;
   height: 34px;
-  flex-shrink: 0;
+  flex-shrink: 0;           /* Never let the icon get squashed when space is tight. */
 }
 
 header h1 {
-  font-size: 1.2rem;
+  font-size: 1.2rem;        /* rem = relative to the root font size (usually 16px) => ~19px. */
   font-weight: 800;
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
+  letter-spacing: -0.02em;  /* Slightly tighter letters for a punchy look. */
+  text-transform: uppercase;/* Shows "STIMBOARD" regardless of how it is typed in the HTML. */
   color: #e2e8f0;
 }
 
+/* The little "N Stims" counter badge. */
 .pill {
   font-size: 0.75rem;
   background: #1e293b;
   border: 1px solid #334155;
   padding: 4px 10px;
-  border-radius: 999px;
-  color: #38bdf8;
+  border-radius: 999px;     /* Huge radius = fully rounded "pill" ends. */
+  color: #38bdf8;           /* Sky blue text. */
   font-weight: 700;
 }
 
 /* --- BUTTON DEFAULTS --- */
+/* Every card in the app is a <button>, so these rules strip the browser's
+   default button look and add the shared "press" feedback. */
 button {
-  border: none;
-  background: none;
-  font-family: inherit;
-  color: inherit;
+  border: none;             /* Remove the default bevel/outline. */
+  background: none;         /* Remove the default gray fill; each card class sets its own. */
+  font-family: inherit;     /* Buttons normally ignore the page font; this makes them use it. */
+  color: inherit;           /* Same for text color. */
   cursor: pointer;
-  text-align: left;
+  text-align: left;         /* Buttons center text by default; the cards want left-aligned. */
+  /* Animate these properties smoothly when they change (press and release). */
   transition: transform 0.08s ease, filter 0.08s ease, border-color 0.15s ease;
 }
 
+/* :active = the instant a finger/mouse is pressing the button. */
 button:active {
-  transform: scale(0.96);
-  filter: brightness(1.15);
+  transform: scale(0.96);   /* Shrink slightly, like a physical key being pushed down. */
+  filter: brightness(1.15); /* And flash a little brighter. */
 }
 
+/* The "Install STIMboard App" button. */
 .install-btn {
-  display: none;
-  background: #2563eb;
+  display: none;            /* HIDDEN by default; app.js sets display:block only when installing is possible. */
+  background: #2563eb;      /* Blue. */
   color: #fff;
   font-size: 0.85rem;
   font-weight: 700;
   padding: 10px 16px;
   border-radius: 12px;
-  align-self: center;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+  align-self: center;       /* Center it in the column instead of stretching full width. */
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3); /* Soft blue glow underneath. */
   text-align: center;
 }
 
 /* --- 1. HERO CARD (CASE!) --- */
 .hero-card {
   width: 100%;
-  background: linear-gradient(145deg, #1e293b, #111827);
-  border: 2px solid var(--case-accent);
+  background: linear-gradient(145deg, #1e293b, #111827); /* Subtle diagonal dark gradient. */
+  border: 2px solid var(--case-accent);                  /* Red outline. */
   border-radius: 20px;
   padding: 16px 18px;
   display: flex;
-  align-items: center;
+  align-items: center;      /* Avatar and text vertically centered with each other. */
   gap: 16px;
-  box-shadow: 0 8px 24px -6px rgba(239, 68, 68, 0.3);
-  position: relative;
-  overflow: hidden;
+  box-shadow: 0 8px 24px -6px rgba(239, 68, 68, 0.3);    /* Red glow below; negative spread keeps it tight. */
+  position: relative;       /* Makes this the reference box for positioned children. */
+  overflow: hidden;         /* Clip anything (like the pulse ring) that pokes outside the rounded corners. */
 }
 
+/* Fixed-size box that holds the avatar and the pulse ring on top of it. */
 .hero-avatar-wrapper {
-  position: relative;
+  position: relative;       /* The pulse ring is positioned relative to THIS box. */
   width: 72px;
   height: 72px;
-  flex-shrink: 0;
+  flex-shrink: 0;           /* Do not shrink the avatar when the title is long. */
 }
 
+/* Used both by the <img> photo and by the fallback emoji <div>. */
 .hero-avatar {
   width: 100%;
   height: 100%;
-  border-radius: 50%;
-  object-fit: cover;
+  border-radius: 50%;       /* A perfect circle. */
+  object-fit: cover;        /* A photo fills the circle without being stretched. */
   border: 2px solid #fff;
-  background: #334155;
-  display: flex;
+  background: #334155;      /* Visible behind the emoji / while a photo loads. */
+  display: flex;            /* The next three lines center the emoji inside the circle. */
   align-items: center;
   justify-content: center;
-  font-size: 2.5rem;
+  font-size: 2.5rem;        /* Emoji size. */
 }
 
+/* The expanding red ring that pulses while CASE! is "playing". */
 .hero-pulse-ring {
   position: absolute;
-  inset: -4px;
+  inset: -4px;              /* Shorthand for top/right/bottom/left = -4px: slightly BIGGER than the avatar. */
   border-radius: 50%;
   border: 2px solid var(--case-accent);
-  opacity: 0;
+  opacity: 0;               /* Invisible until the .playing animation runs. */
 }
 
+/* app.js adds the 'playing' class for 800ms on tap; that triggers the animation. */
 .hero-card.playing .hero-pulse-ring {
-  animation: pulse-ring 0.8s ease-out infinite;
+  animation: pulse-ring 0.8s ease-out infinite; /* Repeats for as long as the class is present. */
 }
 
+/* Keyframes: start nearly normal size and fully visible, end 40% bigger and invisible. */
 @keyframes pulse-ring {
   0% { transform: scale(0.95); opacity: 1; }
   100% { transform: scale(1.4); opacity: 0; }
 }
 
+/* Text column to the right of the avatar. */
 .hero-info { display: flex; flex-direction: column; gap: 4px; }
-.hero-title { font-size: 1.6rem; font-weight: 900; color: #f87171; }
+.hero-title { font-size: 1.6rem; font-weight: 900; color: #f87171; } /* Light red. */
 .hero-sub { font-size: 0.85rem; color: var(--text-sub); }
 
 /* --- 2. FEATURED CARD (THE TRUMPET!) --- */
 .featured-card {
   width: 100%;
-  background: linear-gradient(135deg, #78350f, #b45309, #d97706);
+  background: linear-gradient(135deg, #78350f, #b45309, #d97706); /* Dark brown -> amber -> orange, like brass. */
   border: 2px solid #fbbf24;
   border-radius: 20px;
   padding: 20px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  box-shadow: 0 10px 28px -4px var(--trumpet-glow);
+  justify-content: space-between; /* Text on the left, big emoji on the right. */
+  box-shadow: 0 10px 28px -4px var(--trumpet-glow); /* Gold glow from the variable. */
 }
 
 .featured-content { display: flex; flex-direction: column; gap: 4px; }
-.featured-title { font-size: 1.45rem; font-weight: 900; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.4); }
-.featured-sub { font-size: 0.85rem; color: #fef3c7; font-weight: 500; }
+.featured-title { font-size: 1.45rem; font-weight: 900; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.4); } /* Shadow keeps white text legible on the bright gradient. */
+.featured-sub { font-size: 0.85rem; color: #fef3c7; font-weight: 500; } /* Pale cream. */
 .featured-icon { font-size: 2.4rem; }
 
 /* --- SPACING FIX: Add a line break between stacked cards --- */
+/* #heroSlot and #featuredSlot are plain divs. Making them flex columns lets
+   'gap' space out multiple cards stacked inside (the Trumpet and Birthday
+   cards both live in #featuredSlot). */
 #heroSlot, #featuredSlot {
   display: flex;
   flex-direction: column;
@@ -199,6 +236,9 @@ button:active {
 }
 
 /* --- BIRTHDAY EXCLUSIVE CARD THEME & ANIMATION --- */
+/* The gradient is drawn much larger than the button (see background-size) and
+   this animation slides it back and forth, which looks like shimmering light.
+   It ends where it started (0% -> 100% -> 0%) so the loop has no visible jump. */
 @keyframes birthday-shimmer {
   0% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
@@ -208,16 +248,17 @@ button:active {
 .birthday-card {
   width: 100%;
   /* Added a 4th color to the gradient so it loops smoothly */
+  /* -45deg angles the gradient toward the lower-left. Purple -> magenta -> pink -> purple. */
   background: linear-gradient(-45deg, #7e22ce, #c026d3, #db2777, #7e22ce);
-  background-size: 300% 300%;
+  background-size: 300% 300%; /* 3x larger than the card, giving the animation room to slide. */
   animation: birthday-shimmer 4s ease infinite; /* Continuous shimmering loop */
-  border: 2px solid #fbcfe8;
+  border: 2px solid #fbcfe8;  /* Pale pink outline. */
   border-radius: 20px;
   padding: 20px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  box-shadow: 0 10px 28px -4px rgba(192, 38, 211, 0.45);
+  justify-content: space-between; /* Text left, cake emoji right (same layout as the featured card). */
+  box-shadow: 0 10px 28px -4px rgba(192, 38, 211, 0.45); /* Magenta glow. */
 }
 
 .birthday-content { 
@@ -230,7 +271,7 @@ button:active {
   font-size: 1.45rem; 
   font-weight: 900; 
   color: #ffffff; 
-  text-shadow: 0 2px 4px rgba(0,0,0,0.4); 
+  text-shadow: 0 2px 4px rgba(0,0,0,0.4); /* Legibility over the bright gradient. */
 }
 
 .birthday-sub { 
@@ -241,33 +282,37 @@ button:active {
 
 .birthday-icon { 
   font-size: 2.4rem; 
-  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.3)); 
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.3)); /* Soft shadow so the emoji lifts off the card. */
 }
 
 /* --- 3. GROUPS & COLLAPSIBLE CARD --- */
+/* Container for every group (both plain sections and accordions). */
 #gridContainer {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 20px;                /* Space between one group and the next. */
 }
 
+/* A normal, always-visible group: heading on top, grid below. */
 .group-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
+/* The small uppercase heading, e.g. "THE CLASSICS". */
 .group-title {
   font-size: 0.85rem;
   font-weight: 700;
   color: #64748b;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.05em;   /* Spaced-out capitals read more cleanly. */
   padding-left: 6px;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid #334155; /* Thin divider line under the heading. */
   padding-bottom: 6px;
 }
 
+/* The collapsible accordion (native <details> element, built in app.js). */
 details.collapsible-group {
   background: #131c2e;
   border: 2px solid var(--drg-border);
@@ -276,10 +321,11 @@ details.collapsible-group {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
+/* <summary> is the always-visible clickable header row of the accordion. */
 details.collapsible-group summary {
-  list-style: none;
+  list-style: none;         /* Remove the browser's default disclosure triangle (Firefox/standard)... */
   display: flex;
-  justify-content: space-between;
+  justify-content: space-between; /* Group name on the left, arrow on the right. */
   align-items: center;
   cursor: pointer;
   font-size: 0.95rem;
@@ -290,20 +336,24 @@ details.collapsible-group summary {
   padding: 4px 6px;
 }
 
+/* ...and the same removal for Chrome/Safari (WebKit), which uses a different hook. */
 details.collapsible-group summary::-webkit-details-marker {
   display: none;
 }
 
+/* Our own replacement arrow (the "▼" character built in app.js). */
 .collapse-arrow {
-  transition: transform 0.2s ease;
+  transition: transform 0.2s ease; /* Smooth spin when opening/closing. */
   font-size: 0.85rem;
   color: #fbbf24;
 }
 
+/* The browser adds the 'open' attribute to <details> when expanded; flip the arrow 180 degrees. */
 details.collapsible-group[open] .collapse-arrow {
   transform: rotate(180deg);
 }
 
+/* When expanded, add a divider and space between the header and the buttons. */
 details.collapsible-group[open] summary {
   margin-bottom: 14px;
   padding-bottom: 10px;
@@ -313,23 +363,25 @@ details.collapsible-group[open] summary {
 /* --- 4. SOUND GRID & CARDS --- */
 .sound-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, 1fr); /* Exactly two equal-width columns ('fr' = fraction of free space). */
   gap: 12px;
 }
 
+/* A standard sound button in the grid. */
 .stim-card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 16px;
   padding: 14px 12px;
   display: flex;
-  flex-direction: column;
+  flex-direction: column;   /* Icon on top, text below. */
   gap: 8px;
-  min-height: 94px;
-  justify-content: space-between;
+  min-height: 94px;         /* Keeps every tile the same minimum size even with short text. */
+  justify-content: space-between; /* Pushes the icon to the top and the text to the bottom. */
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
+/* Briefly applied by app.js after a tap: gold border and glow as "now playing" feedback. */
 .stim-card.playing {
   border-color: #fbbf24;
   box-shadow: 0 0 14px rgba(251, 191, 36, 0.35);
@@ -340,6 +392,7 @@ details.collapsible-group[open] summary {
 .stim-title { font-size: 0.95rem; font-weight: 700; color: var(--text-main); line-height: 1.25; }
 .stim-sub { font-size: 0.75rem; color: var(--text-sub); line-height: 1.2; }
 
+/* The install hint at the bottom of the page. */
 footer {
   text-align: center;
   font-size: 0.78rem;
@@ -352,6 +405,9 @@ footer {
    ========================================================================== */
 
 /* Hides the "Tap 3 dots" footer when the app is installed and running natively */
+/* The media query 'display-mode: standalone' matches ONLY when launched from
+   the home screen icon (no browser bars). !important beats any other rule,
+   guaranteeing the hint disappears once the app is installed. */
 @media (display-mode: standalone) {
   #appFooter {
     display: none !important;
