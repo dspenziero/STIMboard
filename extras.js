@@ -405,23 +405,76 @@ function fwBurst(sparks, x, y) {
 // Plays the intro's sound effects using synth.js building blocks. Those
 // functions (getAudioCtx, playBrassNote, playSubDrop, playClap) are top-level
 // declarations in synth.js, so they are shared globals here.
+// Built in layers so it feels like a real party: fanfare, a "Happy Birthday"
+// hook, firework whistle -> boom -> crackle for every burst, a cheer-like
+// noise swell, and a closing flourish. All timings are seconds after 'now'.
 function introSfx() {
   // If synth.js failed to load there is nothing to play.
   if (typeof getAudioCtx !== 'function') return;
   try {
+    const ctx = getAudioCtx();
     // Every sound is scheduled relative to this moment on the audio clock.
-    const t = getAudioCtx().currentTime;
-    // FANFARE: a C-E-G-C major arpeggio (523, 659, 784, 1047 Hz). Each note is
-    // played together with its major third (x1.25) for a fuller sound.
-    [[523.25, 0], [659.25, 0.18], [783.99, 0.36], [1046.5, 0.54]].forEach(([f, o]) => {
-      playBrassNote(f, t + o, 0.5); playBrassNote(f * 1.25, t + o, 0.5);
+    const t = ctx.currentTime;
+    // Everything goes through the shared master gain, so tap-to-stop and the
+    // volume control silence the intro too (getMaster is defined in synth.js).
+    const out = (typeof getMaster === 'function') ? getMaster() : ctx.destination;
+
+    // 1. FANFARE (0s): a bright C-E-G-C arpeggio, each note as a full major
+    //    chord (root, x1.25 third, x1.5 fifth) and an octave-up doubling on the
+    //    last note, ending on a long held chord.
+    [[523.25, 0, 0.3], [659.25, 0.16, 0.3], [783.99, 0.32, 0.3], [1046.5, 0.48, 0.9]].forEach(([f, o, d]) => {
+      playBrassNote(f, t + o, d); playBrassNote(f * 1.25, t + o, d); playBrassNote(f * 1.5, t + o, d);
     });
-    // FIREWORK THUMPS: one low sub-drop per visual burst, 0.8s apart. These
-    // times must stay in step with the burst schedule in playBirthdayIntro().
-    [0.1, 0.9, 1.7, 2.5, 3.3].forEach(o => playSubDrop(t + o, 150, 40, 0.3));
-    // CRACKLE: pairs of handclaps just after each thump, like sparks popping.
-    [0.25, 0.4, 1.05, 1.2, 1.85, 2.0, 2.65, 2.8, 3.45].forEach(o => playClap(t + o));
-  } catch (e) {}                              // Audio problems must never break the visuals.
+    playBrassNote(2093, t + 0.48, 0.9);            // Sparkling octave on top of the held note.
+
+    // 2. HAPPY BIRTHDAY HOOK (1.5s): the first line, "Happy birthday to you",
+    //    G G A G C B, played as bright major chords so it is instantly familiar.
+    let h = 1.5;
+    [[392.00, 0.18], [392.00, 0.12], [440.00, 0.3], [392.00, 0.3], [523.25, 0.3], [493.88, 0.6]].forEach(([f, d]) => {
+      playBrassNote(f, t + h, d); playBrassNote(f * 1.25, t + h, d); playBrassNote(f * 1.5, t + h, d);
+      h += d + 0.04;
+    });
+
+    // 3. FIREWORKS: for each of the 5 scheduled bursts (must match the burst
+    //    times in playBirthdayIntro): a rising WHISTLE just before, a deep BOOM
+    //    on the burst, then a rapid CRACKLE of claps as the sparks fall.
+    [0.1, 0.9, 1.7, 2.5, 3.3].forEach((b, i) => {
+      // Whistle: a quiet sine sweeping up from 500Hz to 2200Hz over 0.35s.
+      const w = ctx.createOscillator(), wg = ctx.createGain();
+      const ws = Math.max(b - 0.35, 0);
+      w.type = 'sine';
+      w.frequency.setValueAtTime(500 + i * 60, t + ws);
+      w.frequency.exponentialRampToValueAtTime(2200, t + b);
+      wg.gain.setValueAtTime(0.001, t + ws);
+      wg.gain.exponentialRampToValueAtTime(0.08, t + b - 0.05);
+      wg.gain.exponentialRampToValueAtTime(0.001, t + b + 0.02);
+      w.connect(wg); wg.connect(out); w.start(t + ws); w.stop(t + b + 0.05);
+      // Boom + a second, higher thump for body.
+      playSubDrop(t + b, 160, 38, 0.45);
+      playSubDrop(t + b, 320, 70, 0.2);
+      // Crackle: 6 quick claps at slightly random gaps (sounds like sparks).
+      for (let c = 0; c < 6; c++) playClap(t + b + 0.12 + c * 0.07 + Math.random() * 0.04);
+    });
+
+    // 4. CHEER SWELL (0.4s - 3.6s): a soft filtered-noise wash that rises and
+    //    falls, like a crowd cheering. Noise buffer -> bandpass -> gain swell.
+    const len = Math.floor(ctx.sampleRate * 3.4), buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;     // White noise.
+    const n = ctx.createBufferSource(); n.buffer = buf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 0.6;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.001, t + 0.4);
+    ng.gain.exponentialRampToValueAtTime(0.09, t + 1.6);            // Swell up...
+    ng.gain.exponentialRampToValueAtTime(0.001, t + 3.7);           // ...and fade away.
+    n.connect(bp); bp.connect(ng); ng.connect(out); n.start(t + 0.4); n.stop(t + 3.8);
+
+    // 5. FINALE (3.7s): a big closing chord (C major, two octaves) with a final
+    //    boom and a burst of claps, so it ends with a punch instead of fading.
+    [523.25, 659.25, 783.99, 1046.5].forEach(f => playBrassNote(f, t + 3.7, 1.1));
+    playSubDrop(t + 3.7, 200, 36, 0.7);
+    for (let c = 0; c < 8; c++) playClap(t + 3.72 + c * 0.05);
+  } catch (e) {}                                  // Audio problems must never break the visuals.
 }
 
 /* ---- THE BIRTHDAY INTRO ITSELF ---- */
@@ -435,7 +488,7 @@ function playBirthdayIntro() {
   // always reach the overlay itself (which is what closes it).
   const ov = document.createElement('div'); ov.id = 'introOverlay';
   ov.innerHTML = '<canvas id="fwCanvas"></canvas><div class="intro-text"><div class="intro-small">🎉 It\'s your day! 🎉</div>' +
-    '<div class="intro-big">HAPPY<br>BIRTHDAY<br>CASE!</div><div class="intro-tap">Tap to continue</div></div>';
+    '<div class="intro-big">HAPPY<br>BIRTHDAY<br>DANIELLE!</div><div class="intro-tap">Tap to continue</div></div>';
   document.body.appendChild(ov);
 
   // 2D drawing context; match the canvas bitmap to the screen size.
@@ -462,6 +515,31 @@ function playBirthdayIntro() {
   // overlay is open, so the sky never goes quiet after the scheduled ones.
   const rnd = setInterval(() => { if (alive) fwBurst(sparks, Math.random() * cv.width, Math.random() * cv.height * 0.5); }, 700);
 
+  // FINALE VOLLEY (3.7s): matches the closing chord + boom in introSfx().
+  // Five bursts across the whole width, 80ms apart, for a big "grand finale".
+  setTimeout(() => {
+    if (!alive) return;
+    for (let k = 0; k < 5; k++) setTimeout(() => {
+      if (alive) fwBurst(sparks, cv.width * (0.1 + k * 0.2), cv.height * (0.2 + Math.random() * 0.25));
+    }, k * 80);
+  }, 3700);
+
+  // CONFETTI RAIN: coloured paper pieces and party emoji drifting down the
+  // whole time the overlay is open (separate from the sparks so they fall
+  // slowly and tumble instead of flying out in a ring).
+  const rain = [];
+  const rainColors = ['#f59e0b', '#fbbf24', '#f87171', '#38bdf8', '#34d399', '#c026d3', '#f472b6'];
+  const rainEmoji = ['🎈', '🎉', '🎂', '✨', '🎁'];
+  const rainTimer = setInterval(() => {
+    if (!alive) return;
+    for (let k = 0; k < 3; k++) {              // Three new pieces every 80ms.
+      const em = Math.random() > 0.85;         // About 15% are emoji.
+      rain.push({ x: Math.random() * cv.width, y: -20, vy: 1.5 + Math.random() * 2.5, vx: (Math.random() - 0.5) * 1.5,
+                  size: em ? 18 + Math.random() * 12 : 5 + Math.random() * 6, rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.2,
+                  color: rainColors[Math.floor(Math.random() * rainColors.length)], text: em ? rainEmoji[Math.floor(Math.random() * rainEmoji.length)] : '' });
+    }
+  }, 80);
+
   // ANIMATION LOOP (runs once per screen refresh while 'alive').
   (function loop() {
     if (!alive) return;
@@ -482,6 +560,17 @@ function playBirthdayIntro() {
       cx.beginPath(); cx.arc(s.x, s.y, 2.2, 0, Math.PI * 2); cx.fill();
       if (s.life <= 0) sparks.splice(i, 1);   // Remove dead sparks.
     }
+    // Draw the confetti rain on top, with normal blending so colours stay true.
+    cx.globalCompositeOperation = 'source-over';
+    for (let i = rain.length - 1; i >= 0; i--) {
+      const p = rain[i];
+      p.x += p.vx; p.y += p.vy; p.rot += p.vr;      // Drift down while tumbling.
+      cx.save(); cx.translate(p.x, p.y); cx.rotate(p.rot);
+      if (p.text) { cx.font = p.size + 'px Arial'; cx.fillText(p.text, -p.size / 2, p.size / 2); }
+      else { cx.fillStyle = p.color; cx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2); }
+      cx.restore();
+      if (p.y > cv.height + 30) rain.splice(i, 1);  // Off the bottom: remove.
+    }
     requestAnimationFrame(loop);              // Schedule the next frame.
   })();
 
@@ -489,7 +578,7 @@ function playBirthdayIntro() {
   // safe to call twice (a tap AND the 12-second timer).
   const close = () => {
     if (!alive) return;
-    alive = false; clearInterval(rnd); ov.classList.add('closing');
+    alive = false; clearInterval(rnd); clearInterval(rainTimer); ov.classList.add('closing');
     setTimeout(() => { ov.remove(); introRunning = false; }, 600); // Wait for the CSS fade.
   };
   // Tapping only works after 1.2s, so an accidental tap cannot skip the show.
@@ -573,3 +662,45 @@ function onFirstTap() {
   preloadAudio();
 }
 document.addEventListener('pointerdown', onFirstTap);
+
+/* ==========================================================================
+   PART 5. AUTOMATIC SILENT-TAIL MEASUREMENT
+   --------------------------------------------------------------------------
+   Recordings often end with a stretch of silence. The browser only reports a
+   clip as finished AFTER that silence, which adds an unwanted extra pause
+   before the next clip in a sequence (the birthday card). This measures how
+   much trailing silence each sequence clip has and publishes it as
+   window.clipTail[fileName] = milliseconds. app.js reads it and starts the
+   next clip's gap as soon as the silence begins.
+   Uses OfflineAudioContext, which needs no user tap and makes no sound.
+   Works offline because the files are in the service worker cache.
+   ========================================================================== */
+window.clipTail = {};
+
+const TAIL_THRESHOLD = 0.015;  // Samples quieter than this (0-1 scale) count as silence.
+const TAIL_KEEP_MS = 40;       // Keep this much silence so the sound never feels clipped.
+
+async function measureTail(name) {
+  try {
+    const res = await fetch(name);
+    if (!res.ok) return;                               // Missing file: nothing to measure.
+    const bytes = await res.arrayBuffer();
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const audio = await new OAC(1, 1, 44100).decodeAudioData(bytes);
+    const data = audio.getChannelData(0);
+    // Walk backwards from the end to the last sample that is clearly audible.
+    let i = data.length - 1;
+    while (i > 0 && Math.abs(data[i]) < TAIL_THRESHOLD) i--;
+    const tailMs = ((data.length - 1 - i) / audio.sampleRate) * 1000 - TAIL_KEEP_MS;
+    window.clipTail[name] = Math.max(0, Math.round(tailMs));
+    if (isDevMode()) console.log('[STIMboard] silent tail of ' + name + ': ' + window.clipTail[name] + ' ms');
+  } catch (e) {}                                       // Never let measuring break anything.
+}
+
+// Measure every file used in a sequence, shortly after load so it does not
+// compete with the first paint.
+setTimeout(() => {
+  const names = {};
+  (window.SOUNDBOARD_DATA || []).forEach(it => (it.audioSequence || []).forEach(n => { names[n] = 1; }));
+  Object.keys(names).forEach(measureTail);
+}, 1500);

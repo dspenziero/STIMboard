@@ -322,6 +322,18 @@ function playAudioSequence(item) {
   // The ordered list of file names, e.g. ["bday1.m4a", "case.m4a", "bday2.m4a"].
   const clips = item.audioSequence;
 
+  // The next clip, loaded in advance: { index, el } or null.
+  let preloaded = null;
+
+  // Milliseconds of trailing silence to skip for the clip at 'index'.
+  // An explicit item.sequenceTrim[index] wins; otherwise use the automatic
+  // measurement from extras.js (window.clipTail, keyed by file name); else 0.
+  const trimAfter = (index) => {
+    const manual = Array.isArray(item.sequenceTrim) ? item.sequenceTrim[index] : undefined;
+    if (typeof manual === 'number') return manual;
+    return (window.clipTail && window.clipTail[clips[index]]) || 0;
+  };
+
   // If a previous gap timer is still pending, cancel it so it cannot start a
   // clip from the old sequence.
   if (sequenceTimer) { clearTimeout(sequenceTimer); sequenceTimer = null; }
@@ -379,11 +391,38 @@ function playAudioSequence(item) {
       }
     };
 
-    // Create the audio element for this clip (the browser starts loading it).
-    const audio = new Audio(clips[index]);
+    // Use the copy we PRELOADED while the previous clip was playing, if there
+    // is one for this position; otherwise create it now (first clip, or the
+    // preload was discarded). Preloading removes the load delay between clips.
+    const audio = (preloaded && preloaded.index === index) ? preloaded.el : new Audio(clips[index]);
+    preloaded = null;
     currentAudio = audio;         // Remember it so the next tap can stop it.
     audio.onended = next;         // Finished normally -> schedule the next clip.
     audio.onerror = failed;       // Load/decode failure (e.g. 404) -> use the stand-in.
+
+    // Start fetching the NEXT clip right now, in the background.
+    if (index + 1 < clips.length) {
+      const pre = new Audio(); pre.preload = 'auto'; pre.src = clips[index + 1];
+      pre.onerror = () => {};     // Ignore: if it fails, playClip falls back normally.
+      preloaded = { index: index + 1, el: pre };
+    }
+
+    // TAIL TRIM: many recordings end with silence baked into the file, and
+    // 'ended' only fires after that silence. If we know how long the silent
+    // tail is (item.sequenceTrim[index], or measured automatically by
+    // extras.js into window.clipTail), move on as soon as the tail begins.
+    // 'next' is guarded by 'advanced', so this can never double-advance, and
+    // the normal onended above stays in place as the safety net.
+    audio.addEventListener('playing', () => {
+      const t = trimAfter(index);
+      if (!(t > 0) || !isFinite(audio.duration)) return;
+      const wait = Math.max(0, audio.duration * 1000 - t - audio.currentTime * 1000);
+      setTimeout(() => {
+        if (advanced || token !== sequenceToken) return; // Already moved on, or cancelled.
+        audio.onended = null; audio.pause();             // Silence only: nothing audible is cut.
+        next();
+      }, wait);
+    }, { once: true });
 
     // play() returns a Promise in modern browsers. It REJECTS when playback is
     // refused (autoplay policy, unsupported source), so route that to 'failed'.
