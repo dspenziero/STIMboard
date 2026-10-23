@@ -253,6 +253,8 @@ window.stimFilter = function (item) {
   // They always stay visible so the page does not jump around while searching;
   // only the ordinary grid buttons (no 'type') are filtered.
   if (item.type) return true;
+  // While arranging every stim must stay on screen (search/filters are hidden).
+  if (window.isArranging && window.isArranging()) return true;
   // Favorites-only mode: hide everything that is not starred.
   if (filterState.favsOnly && !isFav(item.id)) return false;
   // Case-insensitive search text. An empty search matches everything.
@@ -329,13 +331,21 @@ window.decorateCard = function (btn, item) {
 // Finds an ACTIVE item by id (inactive/missing ones are silently dropped).
 function findItem(id) { return (window.SOUNDBOARD_DATA || []).find(i => i.id === id && i.active); }
 
+// Removes ONE stim from the recently played list (the x on its chip). Only the
+// list entry goes: the stim itself stays on the page, and any favorite is untouched.
+function removeRecent(id) {
+  recents = recents.filter(r => r !== id);
+  saveJSON(RECENT_KEY, recents);
+  renderQuickLists();
+}
+
 // Rebuilds both rows inside <div id="quickLists"> (created by buildBrowseBar).
 function renderQuickLists() {
   const host = document.getElementById('quickLists');
   if (!host) return;                          // Browse bar not built yet.
   host.innerHTML = '';                        // Start from a clean slate.
   // Two rows: [heading, list of ids]. Destructured straight into the loop.
-  [['⭐ Favorites', favs], ['🕘 Recently played', recents]].forEach(([label, ids]) => {
+  [['⭐ Favorites', favs, false], ['🕘 Recently played', recents, true]].forEach(([label, ids, removable]) => {
     // Turn ids into real items and drop any that no longer exist, plus the big
     // top cards (they have no star, so an old favorite could never be removed).
     const items = ids.map(findItem).filter(i => i && !i.type);
@@ -344,12 +354,28 @@ function renderQuickLists() {
     const h = document.createElement('div'); h.className = 'quick-title'; h.textContent = label; row.appendChild(h);
     const chips = document.createElement('div'); chips.className = 'quick-chips';
     items.forEach(it => {
+      // Each chip is a small pill: [ play area ][ x ]. The PILL (not the play
+      // button) is handed to triggerStim, so the gold "playing" look and the progress
+      // bar cover the whole pill and are positioned against it (the pill is
+      // position:relative in the CSS). The x is a SIBLING of the play button,
+      // because a <button> cannot contain another <button>.
+      const pill = document.createElement('div'); pill.className = 'quick-chip';
       const chip = document.createElement('button');
-      chip.className = 'quick-chip'; chip.textContent = (it.icon || '🔊') + ' ' + it.title;
-      // Tapping a chip plays the stim exactly like tapping its real button.
+      chip.type = 'button'; chip.className = 'quick-chip-play';
+      chip.textContent = (it.icon || '\uD83D\uDD0A') + ' ' + it.title;
+      // Tapping the play area plays the stim exactly like tapping its real button.
       // chipTap keeps recordPlay from rebuilding these rows under the finger.
-      chip.addEventListener('click', () => { chipTap = true; try { window.triggerStim(it, chip); } finally { chipTap = false; } });
-      chips.appendChild(chip);
+      chip.addEventListener('click', () => { chipTap = true; try { window.triggerStim(it, pill); } finally { chipTap = false; } });
+      pill.appendChild(chip);
+      // Recently played only: an x that removes this stim from the list.
+      if (removable) {
+        const x = document.createElement('button');
+        x.type = 'button'; x.className = 'quick-chip-x'; x.textContent = '\u2715';
+        x.setAttribute('aria-label', 'Remove ' + it.title + ' from recently played');
+        x.addEventListener('click', () => removeRecent(it.id));
+        pill.appendChild(x);
+      }
+      chips.appendChild(pill);
     });
     row.appendChild(chips); host.appendChild(row);
   });
@@ -693,6 +719,8 @@ window.buildDevButtons = function () {
   mk('➕ Add stim', () => window.openAddStim && window.openAddStim());
   // GitHub connection settings (owner, repo, token) on their own screen.
   mk('⚙️ GitHub settings', () => window.openGhSettings && window.openGhSettings());
+  // Reorder stims and groups, and fold groups into collapsible cards (Part 7).
+  mk('↕️ Arrange layout', () => window.startArrange && window.startArrange());
   // The persistent debug log from log.js, with copy / clear.
   mk('📋 View log', () => window.openLogViewer && window.openLogViewer());
   // Clears the service worker and offline caches (NOT your token or favorites)
@@ -1403,3 +1431,331 @@ window.openLogViewer = openLogViewer;
 // renderSoundboard, so wait for the load event).
 if (document.readyState === 'complete') loadUserStims();
 else window.addEventListener('load', loadUserStims);
+
+
+/* ==========================================================================
+   PART 7. ARRANGE MODE: reorder groups and stims, fold groups into cards
+   --------------------------------------------------------------------------
+   WHAT IT DOES (developer mode only; start it with the "Arrange layout" button)
+     - Every group gets a bar with Up / Down buttons and a "Collapsible card"
+       switch. ON folds the group into a tap-to-open card; OFF shows it always.
+     - Every stim gets < > buttons that move it one place earlier or later
+       inside its group (reading order: left to right, then top to bottom).
+     - While arranging, taps do NOT play sounds, every group is shown open, and
+       the card you just moved is scrolled into view and flashes so you can see
+       where it went.
+     - Nothing is saved until you tap Save. Cancel throws the changes away and
+       Reset puts everything back to the original order.
+
+   WHERE IT IS SAVED
+   layout.json in the repo, committed with the same GitHub settings as stims.json,
+   so everyone who opens the app sees your arrangement. A copy is also kept in
+   localStorage so the order is right from the very first paint on the next
+   launch. Its shape is:
+     { "version": 1, "groups": [ { "name": "The Classics", "collapsible": false,
+                                   "items": ["trumpet-short", "barney-gumbled"] } ] }
+   Groups and stims missing from it (for example a stim added later) are placed
+   after the arranged ones, so adding stims never breaks the layout.
+
+   HOW IT PLUGS INTO app.js (every call is guarded, so app.js works without it)
+     isArranging()               should taps be ignored / groups forced open?
+     layoutOrder(groupedItems)   reorders items, sets 'collapsible', returns the
+                                 group names in display order
+     decorateGroup(el, name)     adds the group's Up/Down/Collapsible bar
+     arrangeDecorate(btn, item)  adds the < > buttons to a stim card
+   ========================================================================== */
+
+// The layout everyone sees. Empty 'groups' means "no arrangement": the natural
+// order from data.js / stims.json is used. The localStorage copy (if any) is
+// read NOW, before app.js renders for the first time, so there is no visible
+// re-shuffle on launch.
+const LAYOUT_KEY = 'stimboard-layout';
+let savedLayout = loadJSON(LAYOUT_KEY, { groups: [] });
+if (!savedLayout || !Array.isArray(savedLayout.groups)) savedLayout = { groups: [] };
+
+// Arrange-mode state.
+let arranging = false;   // true while the arrange screen is active
+let draft = null;        // the working copy being edited (same shape as savedLayout)
+let snapshot = '';       // JSON of the draft when arranging began, to detect changes
+let lastMoved = null;    // what was just moved, for the flash: {kind:'item',id} or {kind:'group',name}
+
+// Used by app.js (to ignore taps and open groups) and by the filter.
+window.isArranging = function () { return arranging; };
+
+// A deep copy, so editing the draft can never change the saved layout by accident.
+function cloneLayout(l) { return JSON.parse(JSON.stringify(l)); }
+
+// Finds a group's entry in a layout by name (undefined if it has none).
+function groupEntry(L, name) { return L.groups.find(g => g.name === name); }
+
+/* ---- APPLYING A LAYOUT (called by app.js on every render) ---- */
+// 'groupedItems' is app.js's { "Group name": { collapsible, items: [...] } }.
+// This reorders each group's items IN PLACE, applies the saved collapsible
+// switch, and returns the group names in the order they should be drawn.
+window.layoutOrder = function (groupedItems) {
+  const L = arranging ? draft : savedLayout;
+  const natural = Object.keys(groupedItems);
+  // Nothing saved and not arranging: leave the natural order alone.
+  if (!arranging && (!L || !L.groups.length)) return natural;
+
+  // 1. Group order: arranged groups first (only ones that still exist), then any
+  //    group the layout has never heard of, in its natural order.
+  const ordered = [];
+  L.groups.forEach(e => { if (groupedItems[e.name] && ordered.indexOf(e.name) < 0) ordered.push(e.name); });
+  natural.forEach(n => { if (ordered.indexOf(n) < 0) ordered.push(n); });
+
+  // 2. Inside each group: arranged ids first, in their saved order; any stim the
+  //    layout does not mention keeps its natural order after them.
+  ordered.forEach(name => {
+    const g = groupedItems[name], e = groupEntry(L, name);
+    if (!e) return;
+    // The saved switch wins over data.js, in both directions.
+    if (typeof e.collapsible === 'boolean') g.collapsible = e.collapsible;
+    const pos = Object.create(null);                     // id -> saved position (no prototype keys).
+    (e.items || []).forEach((id, i) => { pos[id] = i; });
+    g.items = g.items
+      .map((it, i) => ({ it: it, k: (it.id in pos) ? pos[it.id] : 1e9 + i }))   // Unknown ids sort last, in natural order.
+      .sort((a, b) => a.k - b.k)
+      .map(x => x.it);
+  });
+
+  // 3. While arranging, keep the draft in step with exactly what is on screen, so
+  //    the move buttons always work on the real current order.
+  if (arranging) {
+    draft.groups = ordered.map(name => ({
+      name: name,
+      collapsible: !!groupedItems[name].collapsible,
+      items: groupedItems[name].items.map(i => i.id)
+    }));
+  }
+  return ordered;
+};
+
+/* ---- MOVING THINGS ---- */
+// Redraws the page, then scrolls the thing that just moved into the middle of the
+// screen and lets it flash (the 'just-moved' class is added while rendering, in
+// decorateGroup / arrangeDecorate). Without this, on a long page the card would
+// jump somewhere off screen and the tap would seem to do nothing.
+function rerenderMoved(what) {
+  lastMoved = what;
+  if (navigator.vibrate) navigator.vibrate(12);          // A tiny tick of feedback.
+  window.renderSoundboard();
+  const el = document.querySelector('.just-moved');
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  setTimeout(() => { if (el) el.classList.remove('just-moved'); lastMoved = null; }, 1400);
+  refreshArrangeBar();                                   // Update the "unsaved changes" note.
+}
+
+// Swaps array positions i and i+dir. Returns false when that would fall off an end.
+function swapAt(arr, i, dir) {
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= arr.length) return false;
+  const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+  return true;
+}
+
+// Moves one stim earlier (dir -1) or later (+1) within its group.
+function moveItem(groupName, id, dir) {
+  const e = groupEntry(draft, groupName);
+  if (e && swapAt(e.items, e.items.indexOf(id), dir)) rerenderMoved({ kind: 'item', id: id });
+}
+// Moves a whole group up (-1) or down (+1) the page.
+function moveGroup(name, dir) {
+  const i = draft.groups.findIndex(g => g.name === name);
+  if (swapAt(draft.groups, i, dir)) rerenderMoved({ kind: 'group', name: name });
+}
+// Turns the "Collapsible card" switch for a group on or off.
+function toggleCollapsible(name) {
+  const e = groupEntry(draft, name);
+  if (e) { e.collapsible = !e.collapsible; rerenderMoved({ kind: 'group', name: name }); }
+}
+
+/* ---- THE CONTROLS DRAWN ON THE PAGE ---- */
+// A small round control. It is a <span role="button"> (not a <button>) because it
+// sits inside a stim card, and buttons cannot be nested inside buttons. A
+// 'disabled' one (already at the start/end) is dimmed and ignores taps.
+function arrangeBtn(label, aria, disabled, onTap) {
+  const b = document.createElement('span');
+  b.textContent = label; b.className = disabled ? 'disabled' : '';
+  b.setAttribute('role', 'button'); b.setAttribute('aria-label', aria);
+  if (disabled) b.setAttribute('aria-disabled', 'true');
+  // stopPropagation keeps the tap from also reaching the card (which would play it).
+  b.addEventListener('click', (e) => { e.stopPropagation(); if (!disabled) onTap(); });
+  return b;
+}
+
+// app.js calls this for every ordinary stim card it builds. Adds the < > buttons.
+window.arrangeDecorate = function (btn, item) {
+  if (!arranging) return;
+  const g = item.group || 'Misc Stims';
+  const e = groupEntry(draft, g);
+  if (!e) return;
+  const i = e.items.indexOf(item.id);
+  const ctrl = document.createElement('div'); ctrl.className = 'arrange-ctrl';
+  ctrl.appendChild(arrangeBtn('\u25C0', 'Move earlier', i <= 0, () => moveItem(g, item.id, -1)));
+  ctrl.appendChild(arrangeBtn('\u25B6', 'Move later', i >= e.items.length - 1, () => moveItem(g, item.id, 1)));
+  btn.appendChild(ctrl);
+  if (lastMoved && lastMoved.kind === 'item' && lastMoved.id === item.id) btn.classList.add('just-moved');
+};
+
+// app.js calls this after it adds a group to the page. Puts the group's bar
+// (name, Up, Down, Collapsible switch) directly above it.
+window.decorateGroup = function (groupEl, name) {
+  if (!arranging) return;
+  const i = draft.groups.findIndex(g => g.name === name);
+  const e = draft.groups[i];
+  if (!e) return;
+  const bar = document.createElement('div'); bar.className = 'arrange-groupbar';
+  const title = document.createElement('div'); title.className = 'ag-name';
+  title.textContent = name;                                // textContent: names are plain text.
+  const mk = (label, aria, disabled, cls, fn) => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+    b.setAttribute('aria-label', aria); if (cls) b.className = cls; b.disabled = disabled;
+    b.addEventListener('click', fn); return b;
+  };
+  bar.appendChild(title);
+  bar.appendChild(mk('\u25B2 Up', 'Move group up', i <= 0, '', () => moveGroup(name, -1)));
+  bar.appendChild(mk('\u25BC Down', 'Move group down', i >= draft.groups.length - 1, '', () => moveGroup(name, 1)));
+  bar.appendChild(mk(e.collapsible ? '\uD83D\uDCE6 Collapsible card: ON' : '\uD83D\uDCE6 Collapsible card: OFF',
+    'Toggle collapsible card', false, 'ag-toggle' + (e.collapsible ? ' on' : ''), () => toggleCollapsible(name)));
+  groupEl.parentNode.insertBefore(bar, groupEl);
+  if (lastMoved && lastMoved.kind === 'group' && lastMoved.name === name) bar.classList.add('just-moved');
+  // A collapsible card normally folds when its header is tapped. While arranging
+  // it must stay open so its stims can be moved, so swallow that tap.
+  if ((groupEl.tagName || '').toUpperCase() === 'DETAILS') {
+    const s = groupEl.querySelector('summary');
+    if (s) s.addEventListener('click', (ev) => ev.preventDefault());
+  }
+};
+
+/* ---- THE ARRANGE BAR (fixed at the bottom of the screen) ---- */
+// Shows how to use the mode, whether there are unsaved changes, and the three
+// actions. It is rebuilt only once; refreshArrangeBar() just updates its note.
+function buildArrangeBar() {
+  let bar = document.getElementById('arrangeBar');
+  if (bar) bar.remove();
+  bar = document.createElement('div'); bar.id = 'arrangeBar';
+  bar.innerHTML =
+    '<div class="ab-help">Tap \u25C0 \u25B6 to move stims. Use Up / Down on a group bar to move groups.</div>' +
+    '<div id="abNote" class="ab-note"></div>' +
+    '<div class="ab-row"><button type="button" id="abCancel">Cancel</button><button type="button" id="abReset">Reset</button><button type="button" id="abSave">Save</button></div>' +
+    '<button type="button" id="abGh">\u2699\uFE0F GitHub settings</button>' +
+    '<div id="abStatus" role="status"></div>';
+  document.body.appendChild(bar);
+  const q = (id) => bar.querySelector(id);
+  q('#abCancel').addEventListener('click', () => leaveArrange(false));
+  q('#abReset').addEventListener('click', resetArrange);
+  q('#abSave').addEventListener('click', saveArrange);
+  // The dev panel (with its GitHub settings button) is hidden while arranging, so
+  // the bar carries its own. The settings screen opens on top of this bar.
+  q('#abGh').addEventListener('click', () => window.openGhSettings && window.openGhSettings());
+  refreshArrangeBar();
+}
+
+// True when the draft differs from how it looked when arranging began.
+function hasChanges() { return JSON.stringify(draft) !== snapshot; }
+
+// Updates the note above the buttons ("No changes yet" / "Unsaved changes").
+function refreshArrangeBar() {
+  const note = document.getElementById('abNote');
+  if (!note) return;
+  const dirty = hasChanges();
+  note.textContent = dirty ? '\u25CF Unsaved changes' : 'No changes yet';
+  note.className = 'ab-note' + (dirty ? ' dirty' : '');
+}
+
+// Shows a message in the arrange bar's status line (red when 'bad').
+function arrangeStatus(msg, bad) {
+  const s = document.getElementById('abStatus');
+  if (s) { s.textContent = msg; s.className = bad ? 'bad' : ''; }
+}
+
+/* ---- ENTERING AND LEAVING ARRANGE MODE ---- */
+function startArrange() {
+  if (arranging) return;
+  arranging = true;
+  stimLog.info('layout', 'arrange started');
+  if (window.stopAllAudio) window.stopAllAudio();        // Silence anything playing.
+  draft = cloneLayout(savedLayout);                      // layoutOrder() fills in every real group below.
+  document.body.classList.add('arranging');              // CSS: shows the bar, hides search + quick lists.
+  window.renderSoundboard();                             // First arranging render syncs the draft.
+  snapshot = JSON.stringify(draft);                      // Baseline for "unsaved changes".
+  buildArrangeBar();
+  showToast('\u2195\uFE0F Arrange mode: move things, then tap Save', 3500);
+  window.scrollTo && window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Leaves arrange mode. 'saved' only controls the log text: the caller has
+// already put the right layout in savedLayout before calling.
+function leaveArrange(saved) {
+  // Cancel with unsaved changes asks first, so a stray tap cannot lose your work.
+  if (!saved && hasChanges() && !confirm('Discard your unsaved layout changes?')) return;
+  arranging = false; draft = null; lastMoved = null;
+  document.body.classList.remove('arranging');
+  const bar = document.getElementById('arrangeBar'); if (bar) bar.remove();
+  stimLog.info('layout', saved ? 'arrange finished (saved)' : 'arrange cancelled');
+  window.renderSoundboard();
+  if (window.refreshExtras) window.refreshExtras();
+}
+
+// Puts everything back to the natural order and the original collapsible
+// settings. It only changes the draft: nothing is saved until Save is tapped.
+function resetArrange() {
+  if (!confirm('Reset to the original order and collapsible settings? (You can still Cancel afterwards.)')) return;
+  draft = { version: 1, groups: [] };                    // Empty = no arrangement.
+  window.renderSoundboard();                             // layoutOrder() re-syncs the draft to natural order.
+  refreshArrangeBar();
+  arrangeStatus('Reset. Tap Save to keep it, or Cancel to go back.');
+  stimLog.info('layout', 'reset to natural order (not saved yet)');
+}
+
+/* ---- SAVING THE LAYOUT TO GITHUB ---- */
+// Commits layout.json with the same GitHub settings as stims.json. If the commit
+// fails (no token, offline...) you stay in arrange mode with your changes intact,
+// so nothing is lost and you can fix the problem and tap Save again.
+async function saveArrange() {
+  const cfg = readCfg(arrangeStatus);                    // Saved GitHub settings (null + message if incomplete).
+  if (!cfg) {
+    // readCfg's generic message points at the dev panel, which is hidden here.
+    arrangeStatus('GitHub is not set up yet. Tap "GitHub settings" just above, then Save again. Your changes are kept.', true);
+    return;
+  }
+  const btn = document.getElementById('abSave'); btn.disabled = true;
+  try {
+    arrangeStatus('Saving…');
+    const body = cloneLayout(draft); body.version = 1;
+    const cur = await ghGet(cfg, 'layout.json');         // null if the file does not exist yet.
+    // The sha (when the file exists) makes GitHub reject the write if it changed meanwhile.
+    await ghPut(cfg, 'layout.json', utf8ToB64(JSON.stringify(body, null, 2) + '\n'), 'Update layout', cur && cur.sha);
+    savedLayout = body; saveJSON(LAYOUT_KEY, savedLayout);   // Remember it on this phone straight away.
+    stimLog.info('layout', 'layout saved', { groups: body.groups.length });
+    leaveArrange(true);
+    showToast('\u2705 Layout saved. Live for everyone in ~1 minute.', 4500);
+  } catch (e) {
+    stimLog.error('layout', 'save failed', e);
+    arrangeStatus('Failed: ' + (e && e.message ? e.message : e) + ' Your changes are still here. Check GitHub settings and tap Save again.', true);
+    btn.disabled = false;
+  }
+}
+
+/* ---- LOADING THE LAYOUT AT START-UP ---- */
+// Fetches layout.json (always revalidating, so a new layout shows as soon as it is
+// published) and applies it. A missing file or no network just keeps whatever is
+// already saved on this phone; the service worker serves the cached copy offline.
+async function loadLayout() {
+  try {
+    const r = await fetch('layout.json', { cache: 'no-cache' });
+    if (!r.ok) return;
+    const L = await r.json();
+    if (!L || !Array.isArray(L.groups)) return;          // Ignore a malformed file.
+    if (JSON.stringify(L) === JSON.stringify(savedLayout)) return;   // Already up to date: avoid a pointless redraw.
+    savedLayout = L; saveJSON(LAYOUT_KEY, L);
+    stimLog.info('layout', 'layout loaded', { groups: L.groups.length });
+    if (!arranging && window.renderSoundboard) window.renderSoundboard();   // Never redraw under an arranging user.
+  } catch (e) {}
+}
+if (document.readyState === 'complete') loadLayout();
+else window.addEventListener('load', loadLayout);
+
+// Exposed for the dev panel's "Arrange layout" button.
+window.startArrange = startArrange;

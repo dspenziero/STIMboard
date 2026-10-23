@@ -549,7 +549,9 @@ body.dev-mode #devToolbar.dev-only { display: flex !important; }
 .quick-chip {
   flex: 0 0 auto;                        /* Never shrink or wrap a chip. */
   background: #1e293b; border: 1px solid #334155; border-radius: 999px;
-  padding: 7px 12px; font-size: 0.8rem; white-space: nowrap;
+  padding: 0; font-size: 0.8rem; white-space: nowrap;
+  display: flex; align-items: center;    /* Play area and x side by side. */
+  position: relative; overflow: hidden;  /* Anchor for the progress bar; clips it to the pill's round ends. */
 }
 
 /* --- COUNTDOWN CARD ----------------------------------------------------------
@@ -703,3 +705,73 @@ body.dev-mode .edit-pen.dev-only { display: flex !important; }   /* Flex centres
    The "Running: extras v10, ..." line under the dev buttons. flex: 1 0 100%
    makes it take a full row inside the wrapping button container. */
 .dev-info { flex: 1 0 100%; font-size: 0.68rem; line-height: 1.35; color: #94a3b8; word-break: break-word; user-select: text; }
+
+/* --- ARRANGE MODE (extras.js Part 7, developer mode only) -----------------------
+   <body> gets the class 'arranging' while the mode is active. Everything here is
+   inert otherwise, because the controls are only created while arranging. */
+
+/* Hide the things that do not belong in arrange mode: search, chips, the dev
+   panel and the pencil/star clutter. Showing only the layout keeps it clear. */
+body.arranging #browseBar, body.arranging #devToolbar, body.arranging #countdownCard { display: none !important; }
+body.arranging .fav-star, body.arranging .edit-pen { display: none !important; }
+/* Room at the bottom so the fixed bar never covers the last row. */
+body.arranging { padding-bottom: 190px; }
+
+/* Group bar: name on its own line, then Up / Down / Collapsible switch. */
+.arrange-groupbar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  background: #111827; border: 1px dashed #fbbf24; border-radius: 14px; padding: 10px;
+  margin-bottom: -6px;                                   /* Sits snugly on top of its group. */
+}
+.ag-name { flex: 1 0 100%; font-size: 0.85rem; font-weight: 800; color: #fbbf24; word-break: break-word; }
+.arrange-groupbar button {
+  flex: 1; padding: 10px 8px; border-radius: 10px; font-size: 0.78rem; font-weight: 800;
+  background: #1e293b; border: 1px solid #334155; color: #e2e8f0; text-align: center;
+}
+.arrange-groupbar button:disabled { opacity: 0.35; }
+.arrange-groupbar .ag-toggle { flex: 1 0 100%; }          /* The switch gets a full row. */
+.arrange-groupbar .ag-toggle.on { background: #14532d; border-color: #34d399; color: #bbf7d0; }
+
+/* < > buttons on a stim card: a pill along the card's bottom edge, big enough
+   for a thumb. The progress bar and star are hidden in this mode, so no clash. */
+.arrange-ctrl { position: absolute; left: 6px; right: 6px; bottom: 6px; display: flex; gap: 6px; z-index: 3; }
+.arrange-ctrl span {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  height: 30px; border-radius: 9px; font-size: 0.9rem; font-weight: 800;
+  background: rgba(15, 23, 42, 0.92); border: 1px solid #fbbf24; color: #fbbf24; cursor: pointer;
+}
+.arrange-ctrl span.disabled { opacity: 0.3; border-color: #475569; color: #94a3b8; cursor: default; }
+/* Make room for the pill so it does not cover the subtitle. */
+body.arranging .stim-card { padding-bottom: 46px; }
+
+/* Brief green flash on whatever was just moved, so it is easy to spot. */
+@keyframes just-moved-flash { 0% { box-shadow: 0 0 0 3px #34d399, 0 0 24px #34d399; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.just-moved { animation: just-moved-flash 1.4s ease-out; border-color: #34d399 !important; }
+
+/* The fixed bar at the bottom: help text, unsaved note, Cancel / Reset / Save. */
+#arrangeBar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 3400;   /* Under the sheets (3500+) so Settings can open over it. */
+  background: #0f172a; border-top: 2px solid #fbbf24; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 6px; max-width: 480px; margin: 0 auto;
+}
+.ab-help { font-size: 0.72rem; color: #94a3b8; line-height: 1.3; }
+.ab-note { font-size: 0.8rem; font-weight: 800; color: #64748b; }
+.ab-note.dirty { color: #fbbf24; }
+.ab-row { display: flex; gap: 8px; }
+.ab-row button { flex: 1; padding: 12px 8px; border-radius: 12px; font-weight: 800; text-align: center; background: #1e293b; border: 1px solid #334155; font-size: 0.9rem; }
+#abSave { background: #2563eb; border-color: #2563eb; color: #fff; }
+#abSave:disabled { opacity: 0.5; }
+#abStatus { min-height: 1.1em; font-size: 0.8rem; font-weight: 700; color: #34d399; }
+#abStatus.bad { color: #f87171; }
+@media (prefers-reduced-motion: reduce) { .just-moved { animation: none; } }
+
+#abGh { padding: 9px; border-radius: 10px; background: #1e293b; border: 1px solid #334155; font-size: 0.78rem; font-weight: 700; color: #e2e8f0; text-align: center; }
+
+/* The two buttons inside a recently-played / favorites pill. The pill itself carries
+   the border and background, so these are plain. */
+.quick-chip-play { padding: 7px 10px 7px 12px; font-size: inherit; white-space: nowrap; color: inherit; }
+.quick-chip-x {
+  padding: 7px 12px 7px 6px; font-size: 0.75rem; color: #94a3b8;   /* Wide hit area for a thumb. */
+  border-left: 1px solid #334155;
+}
+.quick-chip-x:active { color: #f87171; }

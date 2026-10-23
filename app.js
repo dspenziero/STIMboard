@@ -24,6 +24,8 @@
      recordPlay(item)           feeds the "recently played" list
      decorateCard(btn, item)    adds the progress bar and favorite star
      progressStart / Stop       draw the progress bar on the playing card
+     isArranging / layoutOrder / decorateGroup / arrangeDecorate
+                                the dev "Arrange layout" mode (reorder + collapsible groups)
    HOOKS OUT (this file exposes on window for extras.js)
      renderSoundboard, triggerStim, stopAllAudio
    ========================================================================== */
@@ -437,6 +439,9 @@ function playAudioSequence(item) {
 // The click handler shared by EVERY button. 'item' is its SOUNDBOARD_DATA
 // entry; 'el' is the button element (used for the 'playing' glow animation).
 function triggerStim(item, el) {
+  // ARRANGE MODE (dev tool, extras.js Part 7): cards are being reordered, so a
+  // tap must NOT play anything. The move buttons handle their own taps.
+  if (window.isArranging && window.isArranging()) return;
   // TAP-TO-STOP: tapping the button that is already playing stops it, and we
   // return immediately so the tap does NOT also start the sound again.
   if (nowPlaying && nowPlaying.item === item) { stopAllAudio(); return; }
@@ -616,8 +621,21 @@ function renderSoundboard() {
     return;
   }
 
-  // Build one section per group, in the order the groups first appeared.
-  Object.keys(groupedItems).forEach(groupName => {
+  // True while the dev "Arrange layout" screen is active (extras.js Part 7).
+  const arranging = window.isArranging ? window.isArranging() : false;
+
+  // Group order: normally the order groups first appeared. extras.js can replace
+  // that with the saved layout (and also reorder the stims inside each group and
+  // apply the saved "collapsible" switch), via window.layoutOrder(). If it is
+  // missing, or returns nothing usable, the natural order is used.
+  let groupNames = Object.keys(groupedItems);
+  if (window.layoutOrder) {
+    const ordered = window.layoutOrder(groupedItems);
+    if (Array.isArray(ordered) && ordered.length === groupNames.length) groupNames = ordered;
+  }
+
+  // Build one section per group, in the order decided above.
+  groupNames.forEach(groupName => {
     const groupData = groupedItems[groupName];
 
     // The 2-column grid that will hold this group's buttons.
@@ -635,6 +653,8 @@ function renderSoundboard() {
       // added through the form, in dev mode) the edit pencil. Safe no-op if
       // extras.js is missing.
       if (window.decorateCard) window.decorateCard(gridBtn, item);
+      // Arrange mode only: adds the < > move buttons (no-op otherwise).
+      if (window.arrangeDecorate) window.arrangeDecorate(gridBtn, item);
       grid.appendChild(gridBtn);
     });
 
@@ -645,13 +665,15 @@ function renderSoundboard() {
       details.className = 'collapsible-group';
       // While filtering, open the group so its matches are visible. Without
       // this, a match inside a closed accordion would look like "no results".
-      if (filtering) details.open = true;
+      if (filtering || arranging) details.open = true;   // Arranging also needs the stims visible.
       const summary = document.createElement('summary');
       // Shows "Group Name (count)" plus the rotating arrow.
       summary.innerHTML = `<span>${groupName} (${groupData.items.length})</span><span class="collapse-arrow">▼</span>`;
       details.appendChild(summary);
       details.appendChild(grid);
       gridContainer.appendChild(details);
+      // Arrange mode only: adds this group's Up / Down / Collapsible bar above it.
+      if (window.decorateGroup) window.decorateGroup(details, groupName);
     } else {
       // NORMAL group: a heading followed by the grid, always visible.
       const section = document.createElement('div');
@@ -662,6 +684,8 @@ function renderSoundboard() {
       section.appendChild(title);
       section.appendChild(grid);
       gridContainer.appendChild(section);
+      // Arrange mode only: adds this group's Up / Down / Collapsible bar above it.
+      if (window.decorateGroup) window.decorateGroup(section, groupName);
     }
   });
 }
