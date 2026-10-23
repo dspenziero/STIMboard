@@ -10,17 +10,5 @@
       80
     ],
     "active": true
-  },
-  {
-    "id": "testtt2",
-    "title": "TESTTT2",
-    "subtitle": "22222",
-    "icon": "🔊",
-    "group": "Misc Stims",
-    "audio": "testtt2.m4a",
-    "vibrate": [
-      80
-    ],
-    "active": true
   }
 ]
