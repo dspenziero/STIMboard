@@ -1,7 +1,41 @@
 {
   "version": 1,
-  "groups": [],
+  "groups": [
+    {
+      "name": "The Classics",
+      "collapsible": false,
+      "items": [
+        "trumpet-short",
+        "barney-gumbled",
+        "fight-overheard",
+        "big-sean",
+        "follow-the-rules",
+        "dirty-south"
+      ]
+    },
+    {
+      "name": "⛏️ Deep Rock Galactic Salutes",
+      "collapsible": true,
+      "items": [
+        "drg-stone",
+        "drg-on",
+        "drg-fight",
+        "drg-bone",
+        "drg-diff",
+        "drg-never-alone",
+        "drg-home",
+        "drg-hear"
+      ]
+    },
+    {
+      "name": "Misc Stims",
+      "collapsible": false,
+      "items": [
+        "testttt"
+      ]
+    }
+  ],
   "collapse": {
-    "Misc Stims": true
+    "Misc Stims": false
   }
 }
