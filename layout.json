@@ -26,13 +26,6 @@
         "drg-home",
         "drg-hear"
       ]
-    },
-    {
-      "name": "Misc Stims",
-      "collapsible": true,
-      "items": [
-        "testttt"
-      ]
     }
   ],
   "collapse": {
