@@ -1,4 +1,8 @@
-const CACHE_NAME = 'stimboard-modular-v6';
+/* ==========================================================================
+   STIMboard Service Worker (sw.js)
+   ========================================================================== */
+
+const CACHE_NAME = 'stimboard-modular-v7';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
