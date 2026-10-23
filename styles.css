@@ -596,3 +596,59 @@ body.dev-mode #devToolbar.dev-only { display: flex !important; }
   .birthday-card, .gate-emoji, .hero-pulse-ring { animation: none !important; }
   .progress-bar { transition: none !important; }
 }
+
+
+/* --- ADD-STIM FORM (extras.js Part 6) -----------------------------------------
+   A full-screen sheet over the app. The card inside scrolls if the phone
+   keyboard leaves little room. Opened only from the dev-mode "Add stim" button. */
+#addStimSheet {
+  position: fixed; inset: 0; z-index: 3500;            /* Above cards and toast; below the birthday gate. */
+  background: rgba(8, 6, 20, 0.88);
+  display: flex; align-items: flex-start; justify-content: center;
+  overflow-y: auto; padding: 16px 12px 40px;
+}
+.as-card {
+  width: 100%; max-width: 440px; background: #111827;
+  border: 1px solid #fbbf24; border-radius: 18px; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.as-card h2 { font-size: 1.1rem; color: #fbbf24; }
+.as-card label { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; font-weight: 700; color: #94a3b8; flex: 1; min-width: 0; }
+.as-card input[type="text"], .as-card input[type="password"], .as-card input[type="file"] {
+  background: #0b0f19; color: #f8fafc; border: 1px solid #334155; border-radius: 10px;
+  padding: 10px 12px; font-size: 1rem;                  /* 1rem stops iOS zooming into the field. */
+  user-select: text; width: 100%; min-width: 0;         /* Re-enable typing/selecting (the * reset blocks it). */
+}
+.as-row { display: flex; gap: 10px; }
+#asSettings { border: 1px dashed #334155; border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+#asSettings summary { font-size: 0.8rem; font-weight: 700; color: #e2e8f0; cursor: pointer; }
+.as-hint { font-size: 0.72rem; color: #94a3b8; line-height: 1.35; }
+#asStatus { min-height: 1.1em; font-size: 0.85rem; font-weight: 700; color: #34d399; }
+#asStatus.bad { color: #f87171; }                       /* Errors in red. */
+.as-row button { flex: 1; padding: 12px; border-radius: 12px; font-weight: 800; background: #1e293b; border: 1px solid #334155; text-align: center; }
+#asSave { background: #2563eb; border-color: #2563eb; color: #fff; }
+#asSave:disabled { opacity: 0.5; }
+
+/* --- EDIT PENCIL + DELETE BUTTON (extras.js Part 6) -----------------------------
+   The pencil sits left of the favorite star on stims added through the form.
+   Like the star it carries 'dev-only', so it is invisible outside dev mode. */
+.edit-pen {
+  position: absolute; top: 6px; right: 38px;           /* 28px star + 8px edge + 2px gap. */
+  width: 28px; height: 28px;
+  align-items: center; justify-content: center;
+  font-size: 1rem; cursor: pointer; z-index: 2;
+}
+body.dev-mode .edit-pen.dev-only { display: flex !important; }   /* Flex centres the glyph, like the star. */
+/* The red delete button at the bottom of the edit form. */
+#asDelete {
+  width: 100%; padding: 12px; border-radius: 12px; font-weight: 800; text-align: center;
+  background: #450a0a; border: 1px solid #f87171; color: #fecaca;
+}
+#asDelete:disabled { opacity: 0.5; }
+
+/* --- TOKEN CONTROLS (inside the form's "GitHub settings") -----------------------
+   "Show/Hide" reveals what was pasted; "Clear saved token" removes the token from
+   this phone only. They share the row layout of the other form buttons (.as-row
+   button), so only the clear button needs its own warning colours. */
+#asShowToken, #asClearToken { font-size: 0.8rem; padding: 10px; }
+#asClearToken { background: #450a0a; border-color: #f87171; color: #fecaca; }

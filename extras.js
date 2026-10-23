@@ -276,6 +276,16 @@ window.decorateCard = function (btn, item) {
   // so starring something does not play its sound.
   star.addEventListener('click', (e) => { e.stopPropagation(); toggleFav(item.id); });
   btn.appendChild(star);
+  // Stims added through the form (marked userStim) also get a pencil that opens
+  // the edit form. Built-in stims from data.js have none: they are edited in the code.
+  if (item.userStim) {
+    const pen = document.createElement('span');
+    pen.className = 'edit-pen dev-only';
+    pen.textContent = '✏️';
+    pen.setAttribute('role', 'button'); pen.setAttribute('aria-label', 'Edit stim');
+    pen.addEventListener('click', (e) => { e.stopPropagation(); window.openAddStim(item); }); // Do not play the sound.
+    btn.appendChild(pen);
+  }
 };
 
 /* ---- QUICK LISTS: "Favorites" and "Recently played" chip rows ---- */
@@ -615,6 +625,8 @@ window.buildDevButtons = function () {
   // Small helper: creates one button with a label and a click action.
   const mk = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'dev-btn'; b.textContent = label; b.addEventListener('click', fn); host.appendChild(b); };
   // 1. Replay the full birthday intro at any time.
+  // Opens the quick "Add stim" form (Part 6): audio + title -> committed to GitHub.
+  mk('➕ Add stim', () => window.openAddStim && window.openAddStim());
   mk('🎆 Test birthday intro', playBirthdayIntro);
   // 2. Forget that the intro was shown today, so the gate appears again on next launch.
   mk('🔁 Reset intro (show again)', () => { try { localStorage.removeItem(INTRO_KEY); } catch (e) {} showToast('Intro will show again on the next birthday launch'); });
@@ -704,3 +716,423 @@ setTimeout(() => {
   (window.SOUNDBOARD_DATA || []).forEach(it => (it.audioSequence || []).forEach(n => { names[n] = 1; }));
   Object.keys(names).forEach(measureTail);
 }, 1500);
+
+/* ==========================================================================
+   PART 6. USER STIMS: load stims.json + add / edit / delete form (dev mode)
+   --------------------------------------------------------------------------
+   WHAT THIS DOES
+   Stims you create from your phone live in stims.json: a plain JSON list whose
+   items have the same shape as data.js entries. On startup the app fetches that
+   file and merges the items into window.SOUNDBOARD_DATA, so adding a stim needs
+   NO code edits and NO ?v= / CACHE_NAME bumps (sw.js fetches stims.json
+   network-first, so changes show up as soon as GitHub Pages republishes).
+
+   THE FORM (dev mode only)
+   Commits the audio file and the updated stims.json to your GitHub repo through
+   GitHub's "contents" API. Stims added this way are marked userStim, which gives
+   them a pencil button (dev mode only) that reopens the form to EDIT them or
+   DELETE them. Built-in stims from data.js are not editable here: change them
+   in the code.
+
+   THE TOKEN
+   The API needs a personal access token. It is stored ONLY in this phone's
+   localStorage (never in the repo). The form has buttons to replace it (type a
+   new one and save) and to clear it from this phone.
+
+   PIECES, in file order
+     loadUserStims / cacheUserAudio      fetch stims.json, merge, cache audio
+     ghLoad/ghSave/ghClearToken/ghGuess  saved GitHub settings
+     ghUrl/ghHeaders/ghGet/ghPut/ghDelete  thin wrappers over the GitHub API
+     forgetCachedAudio                   drop a file from the offline caches
+     fileToBase64/utf8ToB64/b64ToUtf8    base64 helpers (the API uses base64)
+     openAddStim / saveStim / deleteStim the form and its two actions
+   ========================================================================== */
+
+/* ---- LOADING ---- */
+// Fetches stims.json, adds any new items to the data, re-renders, and makes
+// sure each item's audio is saved for offline use. Every failure is swallowed:
+// if the network is down, the service worker already serves the cached
+// stims.json, and a missing file simply means "no user stims yet".
+async function loadUserStims() {
+  try {
+    // 'no-cache' = always revalidate with the server, so new stims show at once
+    // instead of the browser reusing an old copy.
+    const r = await fetch('stims.json', { cache: 'no-cache' });
+    if (!r.ok) return;                                  // 404 etc.: nothing to add.
+    const list = await r.json();
+    if (!Array.isArray(list)) return;                   // Ignore a malformed file.
+    const data = window.SOUNDBOARD_DATA || (window.SOUNDBOARD_DATA = []);
+    // Build a set of ids already present, so a stim can never appear twice
+    // (for example if this function runs again, or an id clashes with data.js).
+    const have = {};
+    data.forEach(i => { have[i.id] = 1; });
+    let added = 0;
+    list.forEach(it => {
+      if (!it || !it.id || have[it.id]) return;         // Skip junk and duplicates.
+      it.active = it.active !== false;                  // Default to visible unless explicitly false.
+      it.userStim = true;                               // Marks it as editable/deletable (pencil button).
+      data.push(it); have[it.id] = 1; added++;
+      cacheUserAudio(it);                               // Save its audio for offline use.
+    });
+    // Only redraw when something changed, to avoid a pointless flicker.
+    if (added && window.renderSoundboard) window.renderSoundboard();
+  } catch (e) {}
+}
+
+// Saves a user stim's audio for offline use. <audio> playback usually asks the
+// server for PARTIAL content (an HTTP Range request), and the service worker
+// does not store partial responses. A plain fetch() gets the FULL file, which
+// the service worker does store. So: if it is not cached yet, fetch it once.
+function cacheUserAudio(it) {
+  if (!it.audio || !window.caches) return;
+  caches.match(it.audio).then(hit => { if (!hit) fetch(it.audio).catch(() => {}); }).catch(() => {});
+}
+
+/* ---- SAVED GITHUB SETTINGS ---- */
+// One localStorage entry holds { owner, repo, branch, token }.
+const GH_KEY = 'stimboard-gh';
+function ghLoad() { return loadJSON(GH_KEY, {}); }
+function ghSave(cfg) { saveJSON(GH_KEY, cfg); }
+
+// Removes ONLY the token and keeps owner/repo/branch, so replacing a token
+// later means pasting one new value instead of retyping everything.
+function ghClearToken() {
+  const cfg = ghLoad();
+  delete cfg.token;
+  ghSave(cfg);
+}
+
+// Best guess at owner/repo from the page address. A GitHub Pages project site
+// lives at https://OWNER.github.io/REPO/ so both can be read from the URL. With
+// a custom domain nothing can be guessed and the user fills the fields in.
+function ghGuess() {
+  const m = /^(.+)\.github\.io$/.exec(location.hostname);
+  return { owner: m ? m[1] : '', repo: m ? (location.pathname.split('/').filter(Boolean)[0] || '') : '', branch: 'main' };
+}
+
+/* ---- GITHUB API WRAPPERS ---- */
+// URL of a file in the repo through the contents API. Each path segment is
+// encoded separately so a name with spaces or symbols stays valid but the "/"
+// separators survive. 'withRef' adds ?ref=BRANCH, which GET requests need to
+// read from a branch other than the default.
+function ghUrl(cfg, path, withRef) {
+  return 'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/contents/' +
+    path.split('/').map(encodeURIComponent).join('/') + (withRef ? '?ref=' + encodeURIComponent(cfg.branch) : '');
+}
+
+// Headers every API call needs: the token (Bearer = "act as this token's
+// owner"), GitHub's JSON media type, and JSON for request bodies.
+function ghHeaders(cfg) {
+  return { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' };
+}
+
+// Reads a file's metadata: { sha, content (base64), ... }. Returns null when
+// the file does not exist (HTTP 404). 'no-store' stops the browser reusing an
+// old answer, which matters because the sha must be CURRENT for writes.
+async function ghGet(cfg, path) {
+  const r = await fetch(ghUrl(cfg, path, true), { headers: ghHeaders(cfg), cache: 'no-store' });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error('GitHub ' + r.status + ': ' + (await r.text()).slice(0, 120));
+  return r.json();
+}
+
+// Creates or updates a file with a commit. 'base64' is the new content. 'sha'
+// is REQUIRED when the file already exists: it is the version being replaced,
+// and GitHub answers 409 if that is no longer the latest, which prevents
+// silently overwriting someone else's change.
+async function ghPut(cfg, path, base64, message, sha) {
+  const body = { message: message, content: base64, branch: cfg.branch };
+  if (sha) body.sha = sha;
+  const r = await fetch(ghUrl(cfg, path, false), { method: 'PUT', headers: ghHeaders(cfg), body: JSON.stringify(body) });
+  if (!r.ok) throw new Error('GitHub ' + r.status + ': ' + (await r.text()).slice(0, 120));
+  return r.json();
+}
+
+// Deletes a file with a commit. The CURRENT sha proves we are deleting the
+// version we think we are.
+async function ghDelete(cfg, path, sha, message) {
+  const r = await fetch(ghUrl(cfg, path, false), {
+    method: 'DELETE', headers: ghHeaders(cfg),
+    body: JSON.stringify({ message: message, sha: sha, branch: cfg.branch })
+  });
+  if (!r.ok) throw new Error('GitHub ' + r.status + ': ' + (await r.text()).slice(0, 120));
+}
+
+// Drops a file from EVERY service-worker cache, so a deleted or replaced audio
+// file can never be served from a stale offline copy. cache.delete() accepts a
+// relative URL string and resolves it against the page address.
+function forgetCachedAudio(name) {
+  if (!name || !window.caches) return;
+  caches.keys().then(keys => keys.forEach(k => caches.open(k).then(c => c.delete(name)))).catch(() => {});
+}
+
+/* ---- BASE64 HELPERS (the GitHub API sends and expects base64) ---- */
+// A File/Blob -> base64 text. readAsDataURL yields "data:audio/x;base64,XXXX",
+// so we keep only what follows the comma.
+function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(',')[1]);
+    fr.onerror = () => rej(fr.error);
+    fr.readAsDataURL(file);
+  });
+}
+// Text <-> base64 that survives emoji and accents. Plain btoa()/atob() only
+// handle Latin-1, so the text is first converted to UTF-8 bytes (and back).
+function utf8ToB64(s) { return btoa(unescape(encodeURIComponent(s))); }
+function b64ToUtf8(b) { return decodeURIComponent(escape(atob(b.replace(/\s/g, '')))); }
+
+/* ---- THE ADD / EDIT FORM: small helpers ---- */
+// Turns a title into a safe id/filename piece: "Rock On!" -> "rock-on".
+// Lower-cases, collapses every run of other characters into one "-", trims
+// stray dashes, caps the length at 40, and never returns an empty string.
+function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'stim'; }
+
+// Returns a function that shows a message in the form's status line.
+// Pass a second argument of true to show it in red as an error.
+function makeStatus(sheet) {
+  return (msg, bad) => { const s = sheet.querySelector('#asStatus'); s.textContent = msg; s.className = bad ? 'bad' : ''; };
+}
+
+// Reads the GitHub settings from the open form, checks them and remembers them.
+// Returns the settings object, or null after showing an error message.
+function readCfg(sheet, status) {
+  const q = (id) => sheet.querySelector(id);
+  const cfg = { owner: q('#asOwner').value.trim(), repo: q('#asRepo').value.trim(), branch: q('#asBranch').value.trim() || 'main', token: q('#asToken').value.trim() };
+  if (!cfg.owner || !cfg.repo || !cfg.token) {
+    q('#asSettings').open = true;                         // Reveal the fields that need filling in.
+    status('Fill in the GitHub owner, repo and token.', true);
+    return null;
+  }
+  ghSave(cfg);                                            // Remember them for next time.
+  return cfg;
+}
+
+// Text for the small line under the token field, so you can tell at a glance
+// whether a token is stored on this phone. Never shows the token itself.
+function tokenNote(hasToken) {
+  return hasToken ? 'A token is saved on this phone. To replace it, type a new one and tap Save. To remove it, tap Clear saved token.'
+                  : 'No token saved yet. Paste one here.';
+}
+
+/* ---- THE ADD / EDIT FORM ITSELF ---- */
+// Opens the form as a full-screen sheet. With no argument it ADDS a stim; with
+// an item (a user stim) it EDITS that stim and also offers Delete.
+function openAddStim(editItem) {
+  let sheet = document.getElementById('addStimSheet');
+  if (sheet) { sheet.remove(); }                          // Rebuild fresh each time.
+  const editing = !!editItem;
+  const cfg = Object.assign(ghGuess(), ghLoad());         // Saved values win over guesses.
+  sheet = document.createElement('div'); sheet.id = 'addStimSheet';
+  // Fixed markup with no user data inside, so innerHTML is safe. Every value
+  // (which could contain quotes) is assigned below through .value/.textContent.
+  sheet.innerHTML =
+    '<div class="as-card">' +
+    '<h2 id="asHeading"></h2>' +
+    '<label><span id="asFileLabel">Audio file</span><input id="asFile" type="file" accept="audio/*,.m4a,.mp3,.wav,.ogg"></label>' +
+    '<label>Title<input id="asTitle" type="text" placeholder="e.g. Rock Solid"></label>' +
+    '<label>Subtitle<input id="asSub" type="text" placeholder="e.g. Inside joke #12"></label>' +
+    '<div class="as-row"><label>Emoji<input id="asIcon" type="text" value="🔊" maxlength="4"></label>' +
+    '<label>Group<input id="asGroup" type="text" value="Misc Stims"></label></div>' +
+    '<details id="asSettings"><summary>GitHub settings</summary>' +
+    '<label>Owner<input id="asOwner" type="text" autocapitalize="none"></label>' +
+    '<label>Repo<input id="asRepo" type="text" autocapitalize="none"></label>' +
+    '<label>Branch<input id="asBranch" type="text" autocapitalize="none"></label>' +
+    '<label>Access token<input id="asToken" type="password" autocomplete="off" placeholder="github_pat_..."></label>' +
+    '<div class="as-row"><button type="button" id="asShowToken">👁 Show</button><button type="button" id="asClearToken">🗑️ Clear saved token</button></div>' +
+    '<p class="as-hint" id="asTokenNote"></p>' +
+    '<p class="as-hint">Saved only on this phone. Needs a fine-grained token with <b>Contents: Read and write</b> for this one repo.</p>' +
+    '</details>' +
+    '<div id="asStatus" role="status"></div>' +
+    '<div class="as-row"><button type="button" id="asCancel">Cancel</button><button type="button" id="asSave"></button></div>' +
+    '<div id="asDeleteRow"></div>' +
+    '</div>';
+  document.body.appendChild(sheet);
+  const q = (id) => sheet.querySelector(id);
+
+  // Fill the settings from saved/guessed values.
+  q('#asOwner').value = cfg.owner || '';
+  q('#asRepo').value = cfg.repo || '';
+  q('#asBranch').value = cfg.branch || 'main';
+  q('#asToken').value = cfg.token || '';
+  q('#asTokenNote').textContent = tokenNote(!!cfg.token);
+  if (!cfg.token) q('#asSettings').open = true;           // First time: show what is needed.
+
+  // SHOW / HIDE: flips the field between dots and readable text so you can
+  // check what you pasted. It starts hidden every time the form opens.
+  q('#asShowToken').addEventListener('click', () => {
+    const f = q('#asToken'), showing = f.type === 'text';
+    f.type = showing ? 'password' : 'text';
+    q('#asShowToken').textContent = showing ? '👁 Show' : '🙈 Hide';
+  });
+
+  // CLEAR SAVED TOKEN: confirms, removes ONLY the token from this phone's
+  // storage (owner/repo/branch stay), and empties the field. It does not revoke
+  // the token on GitHub: do that on GitHub's token page if it was exposed.
+  q('#asClearToken').addEventListener('click', () => {
+    if (!confirm('Remove the saved GitHub token from this phone? You will need to paste a token again before saving stims.')) return;
+    ghClearToken();
+    q('#asToken').value = '';
+    q('#asTokenNote').textContent = tokenNote(false);
+    makeStatus(sheet)('Token cleared from this phone. (It is still valid on GitHub until you revoke it there.)');
+  });
+
+  // Heading, button labels and fields differ between add and edit.
+  q('#asHeading').textContent = editing ? '✏️ Edit stim' : '➕ Add a stim';
+  q('#asSave').textContent = editing ? 'Save changes' : 'Save stim';
+  if (editing) {
+    q('#asFileLabel').textContent = 'Replace audio (optional): ' + editItem.audio;
+    q('#asTitle').value = editItem.title || '';
+    q('#asSub').value = editItem.subtitle || '';
+    q('#asIcon').value = editItem.icon || '🔊';
+    q('#asGroup').value = editItem.group || 'Misc Stims';
+    // The Delete button exists only when editing.
+    const del = document.createElement('button');
+    del.type = 'button'; del.id = 'asDelete'; del.textContent = '🗑️ Delete this stim';
+    del.addEventListener('click', () => deleteStim(sheet, editItem));
+    q('#asDeleteRow').appendChild(del);
+  }
+  q('#asCancel').addEventListener('click', () => sheet.remove());
+  q('#asSave').addEventListener('click', () => saveStim(sheet, editItem));
+}
+
+/* ---- SAVING (ADD or EDIT) ---- */
+// Saves the form. With no editItem it creates a new stim; with one it updates it.
+// ORDER MATTERS: audio is uploaded FIRST, then stims.json is updated. If the
+// upload fails nothing references the file yet; if the stims.json write fails
+// the only damage is an unused audio file. The reverse order could publish a
+// button whose audio does not exist.
+async function saveStim(sheet, editItem) {
+  const q = (id) => sheet.querySelector(id);
+  const status = makeStatus(sheet);
+  const editing = !!editItem;
+  const file = q('#asFile').files[0];                       // undefined when no file was chosen.
+  const title = q('#asTitle').value.trim();
+
+  // --- Validation: stop early, with a message, before touching GitHub. ---
+  if (!editing && !file) return status('Choose an audio file first.', true);   // Audio is optional when editing.
+  if (!title) return status('Enter a title.', true);
+  if (file && file.size > 20 * 1024 * 1024) return status('That file is over 20 MB. Please use a shorter clip.', true);
+  const cfg = readCfg(sheet, status);                       // Owner/repo/branch/token (null + message if incomplete).
+  if (!cfg) return;
+
+  // Disable Save so a double tap cannot start two uploads at once.
+  const btn = q('#asSave'); btn.disabled = true;
+  try {
+    // The text fields shared by add and edit. Empty emoji/group get defaults.
+    const fields = { title: title, subtitle: q('#asSub').value.trim(), icon: q('#asIcon').value.trim() || '🔊', group: q('#asGroup').value.trim() || 'Misc Stims' };
+    // File extension from the original name (".m4a", ".mp3"...), default ".m4a".
+    const ext = file ? (file.name.match(/\.[A-Za-z0-9]{2,4}$/) || ['.m4a'])[0].toLowerCase() : '';
+    let id, audioName, oldAudio = null;                     // oldAudio = file to delete after a replacement.
+
+    if (editing) {
+      id = editItem.id; audioName = editItem.audio;         // Keep the same id and (unless replaced) the same file.
+      if (file) {
+        // A replacement ALWAYS gets a brand-new filename (id + timestamp), so
+        // phones can never keep serving the old recording from their cache.
+        audioName = id + '-' + Date.now().toString(36) + ext;
+        status('Uploading new audio…');
+        await ghPut(cfg, audioName, await fileToBase64(file), 'Replace audio for: ' + title);
+        oldAudio = editItem.audio;                        // Removed after stims.json is saved.
+      }
+    } else {
+      // Unique id and filename from the title ("rock-on", then "rock-on-2", ...).
+      // The id is also the audio filename, so uniqueness protects both.
+      const have = {}; (window.SOUNDBOARD_DATA || []).forEach(i => { have[i.id] = 1; });
+      id = slugify(title); const base = id; let n = 2; while (have[id]) id = base + '-' + (n++);
+      audioName = id + ext;
+      status('Uploading audio…');
+      // Never overwrite an existing file: ghGet returns null when it is absent.
+      if (await ghGet(cfg, audioName)) throw new Error('A file named ' + audioName + ' already exists.');
+      await ghPut(cfg, audioName, await fileToBase64(file), 'Add audio: ' + audioName);
+    }
+
+    // Read the CURRENT stims.json from GitHub (not the cached copy). The sha
+    // makes GitHub reject the write if the file changed in between.
+    status('Saving…');
+    const cur = await ghGet(cfg, 'stims.json');             // null if the file does not exist yet.
+    const list = cur ? JSON.parse(b64ToUtf8(cur.content)) : [];
+    let item;
+    if (editing) {
+      // Find the entry by id and merge the new fields into it (other properties
+      // such as vibrate stay as they were).
+      const idx = list.findIndex(i => i.id === id);
+      if (idx < 0) throw new Error('This stim is not in stims.json, so it cannot be edited here.');
+      item = Object.assign(list[idx], fields, { audio: audioName });
+    } else {
+      // A new entry in the same shape as a data.js item. vibrate [80] = a short buzz.
+      item = Object.assign({ id: id }, fields, { audio: audioName, vibrate: [80], active: true });
+      list.push(item);
+    }
+    // Write the list back. 'cur && cur.sha' passes the sha only when the file existed.
+    await ghPut(cfg, 'stims.json', utf8ToB64(JSON.stringify(list, null, 2) + '\n'), (editing ? 'Edit stim: ' : 'Add stim: ') + title, cur && cur.sha);
+
+    // Tidy up the replaced recording (best effort: a leftover file is harmless,
+    // so a failure here is ignored rather than reported as a save error).
+    if (oldAudio) {
+      try { const f = await ghGet(cfg, oldAudio); if (f) await ghDelete(cfg, oldAudio, f.sha, 'Remove old audio: ' + oldAudio); } catch (e) {}
+      forgetCachedAudio(oldAudio);                          // And drop this phone's offline copy.
+    }
+
+    // Show it on this phone straight away (GitHub Pages needs a minute to publish).
+    const data = window.SOUNDBOARD_DATA || (window.SOUNDBOARD_DATA = []);
+    if (editing) { Object.assign(editItem, fields, { audio: audioName }); }   // Update the live object in place.
+    else { item.userStim = true; data.push(item); }                           // New: mark it editable and add it.
+    if (window.renderSoundboard) window.renderSoundboard();
+    sheet.remove();
+    showToast((editing ? '✅ Updated "' : '✅ Added "') + title + '". Live for everyone in ~1 minute.', 4500);
+  } catch (e) {
+    // Any failure above lands here: show it in red and let the user retry.
+    status('Failed: ' + (e && e.message ? e.message : e), true);
+    btn.disabled = false;
+  }
+}
+
+/* ---- DELETING ---- */
+// Deletes a user stim: removes it from stims.json FIRST (so the button vanishes
+// for everyone), then deletes its audio file from the repo.
+async function deleteStim(sheet, item) {
+  const status = makeStatus(sheet);
+  // confirm() is a native yes/no dialog; deleting is permanent for everyone.
+  if (!confirm('Delete "' + item.title + '" for everyone? This cannot be undone.')) return;
+  const cfg = readCfg(sheet, status);
+  if (!cfg) return;
+  const btn = sheet.querySelector('#asDelete'); btn.disabled = true;
+  try {
+    status('Deleting…');
+    if (window.stopAllAudio) window.stopAllAudio();       // In case this stim is playing right now.
+    const cur = await ghGet(cfg, 'stims.json');
+    if (!cur) throw new Error('stims.json was not found on GitHub.');
+    const list = JSON.parse(b64ToUtf8(cur.content));
+    const next = list.filter(i => i.id !== item.id);       // Everything except this stim.
+    if (next.length === list.length) throw new Error('This stim is not in stims.json, so it cannot be deleted here.');
+    // The button disappears for everyone as soon as this write is published.
+    await ghPut(cfg, 'stims.json', utf8ToB64(JSON.stringify(next, null, 2) + '\n'), 'Delete stim: ' + item.title, cur.sha);
+
+    // Then delete the recording itself (best effort: an orphan file is harmless).
+    let leftover = false;
+    try { const f = await ghGet(cfg, item.audio); if (f) await ghDelete(cfg, item.audio, f.sha, 'Delete audio: ' + item.audio); }
+    catch (e) { leftover = true; }
+    forgetCachedAudio(item.audio);                         // Drop this phone's offline copy too.
+
+    // Forget it on this phone: data, favorites, recently played, screen.
+    const data = window.SOUNDBOARD_DATA || [];
+    const at = data.indexOf(item); if (at >= 0) data.splice(at, 1);
+    favs = favs.filter(f => f !== item.id); saveJSON(FAV_KEY, favs);
+    recents = recents.filter(r => r !== item.id); saveJSON(RECENT_KEY, recents);
+    if (window.renderSoundboard) window.renderSoundboard();
+    refreshExtras();
+    sheet.remove();
+    showToast(leftover ? '🗑️ Deleted (the audio file could not be removed from the repo)' : '🗑️ Deleted "' + item.title + '"', 4500);
+  } catch (e) {
+    status('Failed: ' + (e && e.message ? e.message : e), true);
+    btn.disabled = false;
+  }
+}
+// Exposed so the pencil button (decorateCard) and the dev toolbar can open the form.
+window.openAddStim = openAddStim;
+
+// Start loading user stims once the page is ready (after app.js has defined
+// renderSoundboard, so wait for the load event).
+if (document.readyState === 'complete') loadUserStims();
+else window.addEventListener('load', loadUserStims);
