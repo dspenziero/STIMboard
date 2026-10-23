@@ -775,3 +775,7 @@ body.arranging .stim-card { padding-bottom: 46px; }
   border-left: 1px solid #334155;
 }
 .quick-chip-x:active { color: #f87171; }
+
+/* The "collapsible card" tick box in the Add/Edit form: a row (the form's labels are columns by default). */
+.as-card label.as-check { flex-direction: row; align-items: center; gap: 10px; font-size: 0.82rem; color: #e2e8f0; }
+.as-card label.as-check input { width: 22px; height: 22px; flex: 0 0 auto; accent-color: #fbbf24; }

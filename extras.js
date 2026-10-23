@@ -1196,7 +1196,9 @@ function openAddStim(editItem) {
     '<label>Title<input id="asTitle" type="text" placeholder="e.g. Rock Solid"></label>' +
     '<label>Subtitle<input id="asSub" type="text" placeholder="e.g. Inside joke #12"></label>' +
     '<div class="as-row"><label>Emoji<input id="asIcon" type="text" value="🔊" maxlength="4"></label>' +
-    '<label>Group<input id="asGroup" type="text" value="Misc Stims"></label></div>' +
+    '<label>Group<input id="asGroup" type="text" value="Misc Stims" list="asGroups" autocomplete="off"></label></div>' +
+    '<datalist id="asGroups"></datalist>' +
+    '<label class="as-check"><input id="asCollapse" type="checkbox"><span>Show this group as a collapsible card (everyone taps it open)</span></label>' +
     '<div id="asGh" class="as-ghline"><span id="asGhText"></span><button type="button" id="asGhBtn">⚙️ GitHub settings</button></div>' +
     '<div id="asStatus" role="status"></div>' +
     '<div class="as-row"><button type="button" id="asCancel">Cancel</button><button type="button" id="asSave"></button></div>' +
@@ -1242,6 +1244,23 @@ function openAddStim(editItem) {
       status('Your phone would not let the app read that file. Try choosing it from "Files" or "Downloads" instead of Drive or Photos, or copy it to Downloads first.', true);
     }
   });
+  // GROUP CHOICES: suggest the existing group names, so a stim can join one by
+  // picking it (typing a new name still creates a new group).
+  const names = [];
+  (window.SOUNDBOARD_DATA || []).forEach(i => { if (i.active && !i.type) { const g = i.group || 'Misc Stims'; if (names.indexOf(g) < 0) names.push(g); } });
+  names.forEach(n => { const o = document.createElement('option'); o.value = n; q('#asGroups').appendChild(o); });
+
+  // COLLAPSIBLE CARD CHECKBOX: starts as the group's CURRENT setting and follows
+  // the Group field until you tick or untick it yourself (then your choice sticks).
+  let cardTouched = false;
+  const syncCard = () => {
+    if (cardTouched) return;
+    q('#asCollapse').checked = !!(window.isGroupCollapsible && window.isGroupCollapsible(q('#asGroup').value.trim() || 'Misc Stims'));
+  };
+  syncCard();
+  q('#asGroup').addEventListener('input', syncCard);
+  q('#asCollapse').addEventListener('change', () => { cardTouched = true; });
+
   q('#asCancel').addEventListener('click', () => sheet.remove());
   q('#asSave').addEventListener('click', () => saveStim(sheet, editItem));
 }
@@ -1327,6 +1346,16 @@ async function saveStim(sheet, editItem) {
       forgetCachedAudio(oldAudio);                          // And drop this phone's offline copy.
     }
 
+    // GROUP CARD SETTING: only written when the checkbox differs from the group's
+    // current setting, so ordinary saves make no extra commit. A failure here does
+    // not undo the stim (it is already saved); the toast just says so.
+    let cardNote = '';
+    const wantCard = q('#asCollapse').checked;
+    if (window.isGroupCollapsible && wantCard !== window.isGroupCollapsible(fields.group)) {
+      try { status('Saving the card setting…'); await setGroupCard(cfg, fields.group, wantCard); }
+      catch (e) { stimLog.warn('layout', 'card setting not saved', e.message); cardNote = ' The collapsible-card setting could not be saved: ' + e.message; }
+    }
+
     // Show it on this phone straight away (GitHub Pages needs a minute to publish).
     const data = window.SOUNDBOARD_DATA || (window.SOUNDBOARD_DATA = []);
     if (editing) { Object.assign(editItem, fields, { audio: audioName }); }   // Update the live object in place.
@@ -1334,7 +1363,7 @@ async function saveStim(sheet, editItem) {
     if (window.renderSoundboard) window.renderSoundboard();
     stimLog.info('form', editing ? 'stim updated' : 'stim added', { id: id, audio: audioName });
     sheet.remove();
-    showToast((editing ? '✅ Updated "' : '✅ Added "') + title + '". Live for everyone in ~1 minute.', 4500);
+    showToast((editing ? '✅ Updated "' : '✅ Added "') + title + '". Live for everyone in ~1 minute.' + cardNote, cardNote ? 8000 : 4500);
   } catch (e) {
     // Any failure above lands here: log it, show it in red, and let the user retry.
     stimLog.error('form', 'save failed', e);
@@ -1457,6 +1486,11 @@ else window.addEventListener('load', loadUserStims);
    Groups and stims missing from it (for example a stim added later) are placed
    after the arranged ones, so adding stims never breaks the layout.
 
+   layout.json may also carry  "collapse": { "Group name": true }  : a per-group
+   "show as a collapsible card" setting. The Add/Edit stim form writes it (so an
+   uploaded group can be folded without arranging anything) and the arrange
+   switch keeps it in step. It always wins over data.js and over arranged entries.
+
    HOW IT PLUGS INTO app.js (every call is guarded, so app.js works without it)
      isArranging()               should taps be ignored / groups forced open?
      layoutOrder(groupedItems)   reorders items, sets 'collapsible', returns the
@@ -1482,6 +1516,36 @@ let lastMoved = null;    // what was just moved, for the flash: {kind:'item',id}
 // Used by app.js (to ignore taps and open groups) and by the filter.
 window.isArranging = function () { return arranging; };
 
+// Is this group currently shown as a collapsible card? Same precedence as
+// layoutOrder: the card map, then the arranged entry, then data (an item with
+// collapsible:true, like the Deep Rock Galactic salutes). The Add/Edit form uses
+// it to pre-tick its checkbox and to skip a needless save when nothing changed.
+window.isGroupCollapsible = function (name) {
+  const L = savedLayout || {};
+  if (L.collapse && typeof L.collapse[name] === 'boolean') return L.collapse[name];
+  const e = groupEntry(L, name);
+  if (e && typeof e.collapsible === 'boolean') return e.collapsible;
+  return (window.SOUNDBOARD_DATA || []).some(i => i.active && (i.group || 'Misc Stims') === name && i.collapsible);
+};
+
+// Commits the card setting for ONE group to layout.json (read, change, write back
+// with the sha, like every other GitHub write). It only touches the card map and,
+// if the group already has an arranged entry, that entry's switch, so the saved
+// order is never disturbed. Throws on failure; the caller decides what to tell the user.
+async function setGroupCard(cfg, group, on) {
+  const cur = await ghGet(cfg, 'layout.json');            // null if the file does not exist yet.
+  let L = null;
+  try { L = cur ? JSON.parse(b64ToUtf8(cur.content)) : null; } catch (e) { L = null; }
+  if (!L || !Array.isArray(L.groups)) L = { version: 1, groups: [] };
+  L.collapse = L.collapse || {};
+  L.collapse[group] = on;
+  const e = L.groups.find(g => g.name === group);
+  if (e) e.collapsible = on;
+  await ghPut(cfg, 'layout.json', utf8ToB64(JSON.stringify(L, null, 2) + '\n'), 'Group card: ' + group + ' = ' + (on ? 'collapsible' : 'always open'), cur && cur.sha);
+  savedLayout = L; saveJSON(LAYOUT_KEY, L);               // Remember it on this phone straight away.
+  stimLog.info('layout', 'group card setting saved', { group: group, collapsible: on });
+}
+
 // A deep copy, so editing the draft can never change the saved layout by accident.
 function cloneLayout(l) { return JSON.parse(JSON.stringify(l)); }
 
@@ -1495,8 +1559,14 @@ function groupEntry(L, name) { return L.groups.find(g => g.name === name); }
 window.layoutOrder = function (groupedItems) {
   const L = arranging ? draft : savedLayout;
   const natural = Object.keys(groupedItems);
-  // Nothing saved and not arranging: leave the natural order alone.
-  if (!arranging && (!L || !L.groups.length)) return natural;
+  // The per-group "collapsible card" map (written by the Add/Edit form and by the
+  // arrange switch). It always wins, so it is applied LAST on every path.
+  const applyCardMap = () => {
+    const cm = (L && L.collapse) || {};
+    Object.keys(groupedItems).forEach(n => { if (typeof cm[n] === 'boolean') groupedItems[n].collapsible = cm[n]; });
+  };
+  // Nothing saved and not arranging: keep the natural order (but still honour the card map).
+  if (!arranging && (!L || !L.groups.length)) { applyCardMap(); return natural; }
 
   // 1. Group order: arranged groups first (only ones that still exist), then any
   //    group the layout has never heard of, in its natural order.
@@ -1518,6 +1588,8 @@ window.layoutOrder = function (groupedItems) {
       .sort((a, b) => a.k - b.k)
       .map(x => x.it);
   });
+
+  applyCardMap();
 
   // 3. While arranging, keep the draft in step with exactly what is on screen, so
   //    the move buttons always work on the real current order.
@@ -1567,7 +1639,12 @@ function moveGroup(name, dir) {
 // Turns the "Collapsible card" switch for a group on or off.
 function toggleCollapsible(name) {
   const e = groupEntry(draft, name);
-  if (e) { e.collapsible = !e.collapsible; rerenderMoved({ kind: 'group', name: name }); }
+  if (e) {
+    e.collapsible = !e.collapsible;
+    // Keep the card map in step too, otherwise an older map entry would override this switch.
+    draft.collapse = draft.collapse || {}; draft.collapse[name] = e.collapsible;
+    rerenderMoved({ kind: 'group', name: name });
+  }
 }
 
 /* ---- THE CONTROLS DRAWN ON THE PAGE ---- */
