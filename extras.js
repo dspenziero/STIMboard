@@ -3,7 +3,7 @@
    --------------------------------------------------------------------------
    ROLE OF THIS FILE
    Everything that is "around" the soundboard rather than part of its core:
-   developer mode, toast messages, favourites, recently played, search,
+   developer mode, toast messages, favorites, recently played, search,
    filtering, progress bars, the birthday countdown, the birthday intro with
    fireworks, and audio preloading.
 
@@ -26,7 +26,7 @@
 
    PARTS, in file order
      1. Toast, dev mode, the 8-second logo hold, birthday helpers
-     2. Favourites, recently played, search + filter, progress bar, toolbar
+     2. Favorites, recently played, search + filter, progress bar, toolbar
      3. Countdown card, birthday intro (fireworks + fanfare), dev buttons
      4. Audio preloading
    ========================================================================== */
@@ -72,7 +72,7 @@ window.showToast = showToast;
 /* --------------------------------------------------------------------------
    PART 1B. DEVELOPER MODE
    A hidden switch that reveals test tools and the unfinished features
-   (search, favourites, recents) and lets the birthday card show on any day.
+   (search, favorites, recents) and lets the birthday card show on any day.
    The setting is saved in localStorage so it survives closing the app.
    -------------------------------------------------------------------------- */
 
@@ -158,7 +158,7 @@ document.body.classList.toggle('dev-mode', isDevMode());
 wireLogoHold();
 
 /* ==========================================================================
-   PART 2. FAVOURITES, RECENTLY PLAYED, SEARCH + FILTER, PROGRESS BAR
+   PART 2. FAVORITES, RECENTLY PLAYED, SEARCH + FILTER, PROGRESS BAR
    --------------------------------------------------------------------------
    The code for all of these is always present, but every piece of their UI
    carries the class 'dev-only'. styles.css hides '.dev-only' unless <body>
@@ -176,11 +176,11 @@ function loadJSON(key, fallback) { try { const v = JSON.parse(localStorage.getIt
 // feature just will not persist, but nothing crashes.
 function saveJSON(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} }
 
-/* ---- FAVOURITES: an array of item ids, saved between launches ---- */
+/* ---- FAVORITES: an array of item ids, saved between launches ---- */
 const FAV_KEY = 'stimboard-favs';
 let favs = loadJSON(FAV_KEY, []);                      // e.g. ["case", "drg-stone"]
 
-// True if this item id is currently a favourite.
+// True if this item id is currently a favorite.
 function isFav(id) { return favs.indexOf(id) !== -1; }
 
 // Adds the id if absent, removes it if present, saves, then redraws the UI.
@@ -195,7 +195,7 @@ function toggleFav(id) {
     s.classList.toggle('on', isFav(id));
     s.textContent = isFav(id) ? '★' : '☆';
   });
-  // Only the favourites-only filter needs a real re-render (the card must vanish).
+  // Only the favorites-only filter needs a real re-render (the card must vanish).
   if (filterState.favsOnly && window.renderSoundboard) window.renderSoundboard();
 }
 
@@ -225,7 +225,7 @@ const filterState = { text: '', favsOnly: false };
 window.stimFilter = function (item) {
   // Normal users never get filtering, even if a stale search term exists.
   if (!isDevMode()) return true;
-  // Favourites-only mode: hide everything that is not starred.
+  // Favorites-only mode: hide everything that is not starred.
   if (filterState.favsOnly && !isFav(item.id)) return false;
   // Case-insensitive search text. An empty search matches everything.
   const q = filterState.text.trim().toLowerCase();
@@ -265,20 +265,20 @@ window.decorateCard = function (btn, item) {
   btn.style.position = btn.style.position || 'relative';
   // Every card gets a progress bar (width 0 until a sound plays).
   const bar = document.createElement('div'); bar.className = 'progress-bar'; btn.appendChild(bar);
-  if (item.type === 'birthday') return;       // No favourite star on the birthday card.
+  if (item.type === 'birthday') return;       // No favorite star on the birthday card.
   // The star is a <span>, NOT a <button>: buttons cannot be nested in buttons.
   const star = document.createElement('span');
-  // 'dev-only' hides it for normal users; 'on' colours it gold when favourited.
+  // 'dev-only' hides it for normal users; 'on' colours it gold when favorited.
   star.className = 'fav-star dev-only' + (isFav(item.id) ? ' on' : '');
   star.textContent = isFav(item.id) ? '★' : '☆';
-  star.setAttribute('role', 'button'); star.setAttribute('aria-label', 'Toggle favourite');
+  star.setAttribute('role', 'button'); star.setAttribute('aria-label', 'Toggle favorite');
   // stopPropagation() keeps the click from also reaching the card underneath,
   // so starring something does not play its sound.
   star.addEventListener('click', (e) => { e.stopPropagation(); toggleFav(item.id); });
   btn.appendChild(star);
 };
 
-/* ---- QUICK LISTS: "Favourites" and "Recently played" chip rows ---- */
+/* ---- QUICK LISTS: "Favorites" and "Recently played" chip rows ---- */
 
 // Finds an ACTIVE item by id (inactive/missing ones are silently dropped).
 function findItem(id) { return (window.SOUNDBOARD_DATA || []).find(i => i.id === id && i.active); }
@@ -289,7 +289,7 @@ function renderQuickLists() {
   if (!host) return;                          // Toolbar not built yet.
   host.innerHTML = '';                        // Start from a clean slate.
   // Two rows: [heading, list of ids]. Destructured straight into the loop.
-  [['⭐ Favourites', favs], ['🕘 Recently played', recents]].forEach(([label, ids]) => {
+  [['⭐ Favorites', favs], ['🕘 Recently played', recents]].forEach(([label, ids]) => {
     // Turn ids into real items and drop any that no longer exist.
     const items = ids.map(findItem).filter(Boolean);
     if (!items.length) return;                // Empty row: show nothing at all.
@@ -307,7 +307,7 @@ function renderQuickLists() {
   });
 }
 
-/* ---- DEV TOOLBAR: search box + favourites-only toggle + quick lists ---- */
+/* ---- DEV TOOLBAR: search box + favorites-only toggle + quick lists ---- */
 
 // Builds the toolbar once and inserts it ABOVE the hero card.
 function buildToolbar() {
@@ -329,7 +329,7 @@ function buildToolbar() {
   const box = wrap.querySelector('#searchBox');
   box.addEventListener('input', () => { filterState.text = box.value; window.renderSoundboard(); });
 
-  // FAVOURITES-ONLY toggle: flips the flag, updates the label/colour, re-renders.
+  // FAVORITES-ONLY toggle: flips the flag, updates the label/colour, re-renders.
   const favBtn = wrap.querySelector('#favFilterBtn');
   favBtn.addEventListener('click', () => {
     filterState.favsOnly = !filterState.favsOnly;
@@ -340,7 +340,7 @@ function buildToolbar() {
 }
 
 // Redraws everything this file owns. Called at start-up and after any change
-// to dev mode or favourites. Each optional piece is guarded because it is
+// to dev mode or favorites. Each optional piece is guarded because it is
 // defined later in the file (Part 3) or may be absent.
 function refreshExtras() {
   buildToolbar();

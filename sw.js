@@ -17,7 +17,7 @@
    TO SHIP AN UPDATE: bump CACHE_NAME (and the ?v= numbers in index.html).
    ========================================================================== */
 
-const CACHE_NAME = 'stimboard-modular-v17';
+const CACHE_NAME = 'stimboard-modular-v18';
 
 // Files saved at install time. Missing files (e.g. an audio file not uploaded
 // yet) are skipped individually so one 404 can never break the install.

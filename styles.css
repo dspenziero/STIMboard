@@ -422,7 +422,7 @@ footer {
      - .dev-only visibility rules (the switch behind developer mode)
      - toast message
      - now-playing look + progress bar
-     - favourite star
+     - favorite star
      - dev toolbar, search box, quick-list chips
      - countdown card
      - birthday gate + full-screen intro overlay
@@ -490,7 +490,7 @@ body.dev-mode #devToolbar.dev-only { display: flex !important; }
    such as the hero card's pulse ring, if that ring extends past the edge). */
 .hero-card, .featured-card, .birthday-card, .stim-card { position: relative; overflow: hidden; }
 
-/* --- FAVOURITE STAR ----------------------------------------------------------
+/* --- FAVORITE STAR ----------------------------------------------------------
    A tiny tappable <span> in a card's top-right corner. Only visible in dev
    mode (it also carries 'dev-only'). 'align-items/justify-content' centre the
    glyph; 'display:flex' itself comes from the dev-mode rule above. */
@@ -499,15 +499,15 @@ body.dev-mode #devToolbar.dev-only { display: flex !important; }
   width: 28px; height: 28px;      /* Big enough to hit with a thumb. */
   align-items: center; justify-content: center;
   font-size: 1.15rem;
-  color: #64748b;                 /* Muted grey when not a favourite. */
+  color: #64748b;                 /* Muted grey when not a favorite. */
   cursor: pointer;
   z-index: 2;                     /* Above the card's own content. */
 }
-.fav-star.on { color: #fbbf24; }  /* Gold when favourited. */
+.fav-star.on { color: #fbbf24; }  /* Gold when favorited. */
 
 /* --- DEV TOOLBAR -------------------------------------------------------------
    The dashed gold panel above the hero card: badge, search row, test buttons
-   and the Favourites/Recently-played chip rows. */
+   and the Favorites/Recently-played chip rows. */
 #devToolbar {
   flex-direction: column; gap: 10px;     /* display:flex is applied by the dev-mode rule. */
   background: #111827;
@@ -528,7 +528,7 @@ body.dev-mode #devToolbar.dev-only { display: flex !important; }
   background: #1e293b; border: 1px solid #334155; border-radius: 10px;
   padding: 8px 12px; font-size: 0.8rem; font-weight: 700; color: #e2e8f0;
 }
-#favFilterBtn.on { border-color: #fbbf24; color: #fbbf24; } /* Gold while favourites-only is active. */
+#favFilterBtn.on { border-color: #fbbf24; color: #fbbf24; } /* Gold while favorites-only is active. */
 #devButtons { display: flex; flex-wrap: wrap; gap: 8px; }   /* Test buttons wrap onto extra lines. */
 
 /* Quick lists: a heading plus a horizontally scrolling row of chips. */

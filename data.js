@@ -46,7 +46,7 @@
      data.js   -> publishes window.SOUNDBOARD_DATA and window.STIM_BIRTHDAY
      app.js    -> reads SOUNDBOARD_DATA to build buttons and play sounds
      extras.js -> reads STIM_BIRTHDAY (countdown, intro) and SOUNDBOARD_DATA
-                  (favourites, recents, search, audio preloading)
+                  (favorites, recents, search, audio preloading)
      sw.js     -> has its OWN PRECACHE list of files: when you add a new audio
                   file here, ALSO add it to PRECACHE in sw.js so it works
                   offline from the very first visit.

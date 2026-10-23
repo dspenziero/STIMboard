@@ -6,7 +6,7 @@
    everything it depends on already exists by the time it runs:
      - data.js   -> defines window.SOUNDBOARD_DATA (the list of buttons)
      - synth.js  -> defines window.playProceduralSound (the synth fallback)
-     - extras.js -> defines dev mode, favourites, progress bars, the intro...
+     - extras.js -> defines dev mode, favorites, progress bars, the intro...
    Load order in index.html: data.js, synth.js, extras.js, app.js.
    What lives in here, in file order:
      0. (Removed) the old cache nuker; sw.js now owns freshness and offline
@@ -20,9 +20,9 @@
    HOOKS INTO extras.js (all optional; each call is guarded with "if (window.x)"
    so the soundboard still works if extras.js is missing)
      isDevMode / isBirthdayNow  decide which items are visible
-     stimFilter(item)           search + favourites-only filtering
+     stimFilter(item)           search + favorites-only filtering
      recordPlay(item)           feeds the "recently played" list
-     decorateCard(btn, item)    adds the progress bar and favourite star
+     decorateCard(btn, item)    adds the progress bar and favorite star
      progressStart / Stop       draw the progress bar on the playing card
    HOOKS OUT (this file exposes on window for extras.js)
      renderSoundboard, triggerStim, stopAllAudio
@@ -533,7 +533,7 @@ function renderSoundboard() {
   //   1. item.active is true (the master on/off switch in data.js), AND
   //   2. it is not birthdayOnly, OR it is the real birthday, OR dev mode is on
   //      (this is how the birthday card appears/disappears), AND
-  //   3. it passes the dev-mode search / favourites filter (window.stimFilter,
+  //   3. it passes the dev-mode search / favorites filter (window.stimFilter,
   //      which always returns true for normal users).
   // isDevMode()/isBirthdayNow() come from extras.js (loaded before this file);
   // the "? ... : false" fallbacks keep the app working if it is missing.
@@ -564,7 +564,7 @@ function renderSoundboard() {
       heroBtn.addEventListener('click', () => triggerStim(item, heroBtn));
       // data-id lets extras.js find this card later (e.g. to update its star).
       heroBtn.dataset.id = item.id;
-      // extras.js hook: adds the progress bar (and a dev-only favourite star).
+      // extras.js hook: adds the progress bar (and a dev-only favorite star).
       if (window.decorateCard) window.decorateCard(heroBtn, item);
       heroSlot.appendChild(heroBtn);
     } else if (item.type === 'featured' && featuredSlot) {
@@ -575,7 +575,7 @@ function renderSoundboard() {
       featBtn.addEventListener('click', () => triggerStim(item, featBtn));
       // data-id lets extras.js find this card later (e.g. to update its star).
       featBtn.dataset.id = item.id;
-      // extras.js hook: adds the progress bar (and a dev-only favourite star).
+      // extras.js hook: adds the progress bar (and a dev-only favorite star).
       if (window.decorateCard) window.decorateCard(featBtn, item);
       featuredSlot.appendChild(featBtn);
     } else if (item.type === 'birthday' && featuredSlot) {
@@ -586,7 +586,7 @@ function renderSoundboard() {
       bdayBtn.addEventListener('click', () => triggerStim(item, bdayBtn));
       // data-id lets extras.js find this card later (e.g. to update its star).
       bdayBtn.dataset.id = item.id;
-      // extras.js hook: adds the progress bar (and a dev-only favourite star).
+      // extras.js hook: adds the progress bar (and a dev-only favorite star).
       if (window.decorateCard) window.decorateCard(bdayBtn, item);
       featuredSlot.appendChild(bdayBtn);
     } else {
@@ -619,7 +619,7 @@ function renderSoundboard() {
       gridBtn.innerHTML = `<span class="stim-icon">${item.icon || "🔊"}</span><div class="stim-text"><span class="stim-title">${item.title}</span><span class="stim-sub">${item.subtitle}</span></div>`;
       gridBtn.addEventListener('click', () => triggerStim(item, gridBtn));
       gridBtn.dataset.id = item.id;
-      // extras.js hook: adds the favourite star (dev mode only) and the
+      // extras.js hook: adds the favorite star (dev mode only) and the
       // progress bar. Safe no-op if extras.js is missing.
       if (window.decorateCard) window.decorateCard(gridBtn, item);
       grid.appendChild(gridBtn);
