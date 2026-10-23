@@ -17,13 +17,13 @@
    TO SHIP AN UPDATE: bump CACHE_NAME (and the ?v= numbers in index.html).
    ========================================================================== */
 
-const CACHE_NAME = 'stimboard-modular-v16';
+const CACHE_NAME = 'stimboard-modular-v17';
 
 // Files saved at install time. Missing files (e.g. an audio file not uploaded
 // yet) are skipped individually so one 404 can never break the install.
 const PRECACHE = [
   './', './index.html', './styles.css', './data.js', './synth.js', './extras.js', './app.js',
-  './manifest.json', './icon-192-v2.png', './icon-512-v2.png',
+  './manifest.json', './icon-192-v2.png', './icon-512-v2.png', './icon-maskable-192.png', './icon-maskable-512.png',
   './case.m4a', './bday1.m4a', './bday2.m4a', './the-trumpet.m4a', './trumpet.m4a',
   './barney-gumbled.m4a', './fuckwitme-bich.m4a', './fuckwit-chu.m4a',
   './follow-rules.m4a', './dirty-south.m4a', './rocknstone.m4a', './rock-on.m4a',
