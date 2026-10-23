@@ -15,7 +15,7 @@
   CACHE-BUSTING REMINDER: the "?v=N" on the stylesheet and script URLs forces
   phones to re-download a file. Whenever you edit styles.css / data.js /
   synth.js / app.js, bump THAT file's ?v= number below, AND bump CACHE_NAME in
-  sw.js. (Current: styles v3, data v6, synth v5, app v6, sw cache v9.)
+  sw.js. (Current: styles v5, data v9, synth v7, extras v3, app v9, sw cache v15.)
   ============================================================================
 -->
 <html lang="en"> <!-- lang helps screen readers and translation tools -->
@@ -51,7 +51,7 @@
 
   <!-- External Stylesheet -->
   <!-- All visual styling lives in styles.css. Bump ?v=3 when that file changes. -->
-  <link rel="stylesheet" href="./styles.css?v=3">
+  <link rel="stylesheet" href="./styles.css?v=5">
 </head>
 <body>
 
@@ -96,9 +96,8 @@
     <!-- Native Android Install Banner -->
     <!-- Hidden by CSS (display:none). app.js reveals it only when the browser
          fires 'beforeinstallprompt', and hides it again after install.
-         NOTE: the "??" is how this file currently stores the emoji; it is likely a
-         character-encoding casualty from an earlier save. Replace it with a real
-         emoji (for example the phone or download emoji) if you want an icon there. -->
+         The leading emoji is the "mobile phone with arrow" icon. This file must be
+         saved as UTF-8 or the emoji turns into "??". -->
     <button id="installBtn" class="install-btn">📲 Install STIMboard App</button>
 
     <!-- Dynamic Mount Points -->
@@ -124,8 +123,9 @@
          2. synth.js defines window.playProceduralSound
          3. app.js   uses both of the above to build the UI and play sounds
        Each ?v=N is a cache-buster: bump it when that file changes. -->
-  <script src="./data.js?v=6"></script>
-  <script src="./synth.js?v=5"></script>
-  <script src="./app.js?v=6"></script>
+  <script src="./data.js?v=9"></script>
+  <script src="./synth.js?v=7"></script>
+  <script src="./extras.js?v=3"></script>
+  <script src="./app.js?v=9"></script>
 </body>
 </html>

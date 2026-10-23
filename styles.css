@@ -413,3 +413,186 @@ footer {
     display: none !important;
   }
 }
+
+
+/* ==========================================================================
+   EXTRAS: styles for everything added by extras.js
+   --------------------------------------------------------------------------
+   Sections, in order:
+     - .dev-only visibility rules (the switch behind developer mode)
+     - toast message
+     - now-playing look + progress bar
+     - favourite star
+     - dev toolbar, search box, quick-list chips
+     - countdown card
+     - birthday gate + full-screen intro overlay
+     - reduced-motion accessibility override
+   ========================================================================== */
+
+/* --- DEV-ONLY VISIBILITY ---------------------------------------------------
+   extras.js gives dev-mode UI the class 'dev-only'. By default it is hidden.
+   When developer mode is on, extras.js adds 'dev-mode' to <body>, and the
+   rules below un-hide it. '!important' guarantees a stray 'display' set by
+   another rule (like .fav-star's flex layout) cannot leak it to normal users. */
+.dev-only { display: none !important; }
+/* Generic dev-only elements become normal blocks when dev mode is on... */
+body.dev-mode .dev-only { display: block !important; }
+/* ...but the star needs flex (to centre its glyph) and the toolbar needs flex
+   (column layout). These more specific selectors win over the generic rule. */
+body.dev-mode .fav-star.dev-only { display: flex !important; }
+body.dev-mode #devToolbar.dev-only { display: flex !important; }
+
+/* --- TOAST -------------------------------------------------------------------
+   The pill-shaped message created by showToast() in extras.js. It always
+   exists in the page once used, but is invisible (opacity 0) and pushed 30px
+   down until the 'show' class is added, which fades and slides it into view. */
+#toast {
+  position: fixed;                 /* Pinned to the screen, above the page. */
+  left: 50%; bottom: 28px;         /* Horizontally centred, 28px from the bottom. */
+  transform: translate(-50%, 30px);/* -50% X re-centres it on its own width; +30px Y hides it below. */
+  opacity: 0;                      /* Invisible until shown. */
+  pointer-events: none;            /* Never blocks taps on buttons underneath. */
+  background: #0f172a; color: #f8fafc;
+  border: 1px solid #fbbf24;       /* Gold outline to match the app's accent. */
+  padding: 10px 18px; border-radius: 999px;
+  font-size: 0.85rem; font-weight: 700;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  z-index: 3000;                   /* Above the confetti canvas (999) and cards. */
+  max-width: 90vw; text-align: center; /* Long messages wrap instead of overflowing. */
+  transition: opacity 0.25s ease, transform 0.25s ease; /* The fade + slide. */
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); } /* Visible, at its resting position. */
+
+/* --- NOW-PLAYING LOOK + PROGRESS BAR ----------------------------------------
+   app.js adds 'is-playing' to the button that is currently sounding (and
+   removes it on stop/end). '!important' is needed because each card type
+   (hero, featured, ...) sets its own border-color and box-shadow. */
+.is-playing {
+  border-color: #fbbf24 !important;
+  box-shadow: 0 0 16px rgba(251,191,36,0.45) !important;
+}
+
+/* The bar is a child <div> that extras.js adds to every card. Its WIDTH is
+   animated from 0% to 100% by JavaScript (a CSS transition set inline), so no
+   keyframes are needed here. */
+.progress-bar {
+  position: absolute;              /* Anchored to the card (cards are position:relative below). */
+  left: 0; bottom: 0;              /* Along the bottom edge, growing from the left. */
+  height: 4px; width: 0%;          /* Thin; empty until a sound starts. */
+  background: linear-gradient(90deg, #fbbf24, #f472b6); /* Gold -> pink. */
+  border-radius: 0 4px 4px 0;      /* Rounded on the leading (right) end only. */
+  pointer-events: none;            /* Decorative: taps pass through to the card. */
+}
+
+/* The bar and star are absolutely positioned, so every card must be their
+   positioning anchor. 'overflow: hidden' clips the bar to the card's rounded
+   corners (side effect: it would also clip any glow drawn OUTSIDE the card,
+   such as the hero card's pulse ring, if that ring extends past the edge). */
+.hero-card, .featured-card, .birthday-card, .stim-card { position: relative; overflow: hidden; }
+
+/* --- FAVOURITE STAR ----------------------------------------------------------
+   A tiny tappable <span> in a card's top-right corner. Only visible in dev
+   mode (it also carries 'dev-only'). 'align-items/justify-content' centre the
+   glyph; 'display:flex' itself comes from the dev-mode rule above. */
+.fav-star {
+  position: absolute; top: 6px; right: 8px;
+  width: 28px; height: 28px;      /* Big enough to hit with a thumb. */
+  align-items: center; justify-content: center;
+  font-size: 1.15rem;
+  color: #64748b;                 /* Muted grey when not a favourite. */
+  cursor: pointer;
+  z-index: 2;                     /* Above the card's own content. */
+}
+.fav-star.on { color: #fbbf24; }  /* Gold when favourited. */
+
+/* --- DEV TOOLBAR -------------------------------------------------------------
+   The dashed gold panel above the hero card: badge, search row, test buttons
+   and the Favourites/Recently-played chip rows. */
+#devToolbar {
+  flex-direction: column; gap: 10px;     /* display:flex is applied by the dev-mode rule. */
+  background: #111827;
+  border: 1px dashed #fbbf24;            /* Dashed = clearly "not a normal feature". */
+  border-radius: 14px; padding: 12px;
+}
+.dev-badge { font-size: 0.7rem; font-weight: 800; color: #fbbf24; letter-spacing: 0.08em; }
+.search-row { display: flex; gap: 8px; } /* Search box + Favs button side by side. */
+#searchBox {
+  flex: 1; min-width: 0;                 /* Takes the spare width; min-width:0 lets it shrink inside flex. */
+  background: #0b0f19; color: #f8fafc;
+  border: 1px solid #334155; border-radius: 10px;
+  padding: 9px 12px; font-size: 0.9rem;
+  user-select: text;                     /* Re-enable text selection (the * reset turns it off) so typing/editing works. */
+}
+/* The Favs toggle and the dev test buttons share one look. */
+#favFilterBtn, .dev-btn {
+  background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+  padding: 8px 12px; font-size: 0.8rem; font-weight: 700; color: #e2e8f0;
+}
+#favFilterBtn.on { border-color: #fbbf24; color: #fbbf24; } /* Gold while favourites-only is active. */
+#devButtons { display: flex; flex-wrap: wrap; gap: 8px; }   /* Test buttons wrap onto extra lines. */
+
+/* Quick lists: a heading plus a horizontally scrolling row of chips. */
+.quick-row { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.quick-title { font-size: 0.72rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+.quick-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; } /* Swipe sideways if many chips. */
+.quick-chip {
+  flex: 0 0 auto;                        /* Never shrink or wrap a chip. */
+  background: #1e293b; border: 1px solid #334155; border-radius: 999px;
+  padding: 7px 12px; font-size: 0.8rem; white-space: nowrap;
+}
+
+/* --- COUNTDOWN CARD ----------------------------------------------------------
+   The "N days until your birthday!" banner (extras.js renderCountdown). */
+.countdown-card {
+  text-align: center; font-weight: 800; font-size: 0.95rem; color: #fbcfe8;
+  background: linear-gradient(135deg, #3b0764, #831843); /* Deep purple -> deep pink. */
+  border: 1px solid #f472b6; border-radius: 16px; padding: 12px;
+  box-shadow: 0 6px 18px rgba(192,38,211,0.3);
+}
+
+/* --- BIRTHDAY GATE ("Tap to open your surprise") -----------------------------
+   Covers the whole screen on the real birthday until tapped. The tap is the
+   user gesture browsers require before audio may play. */
+#introGate {
+  position: fixed; inset: 0;             /* 'inset: 0' = top/right/bottom/left all 0. */
+  z-index: 4000;                         /* Above the toast (3000) and everything else. */
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 16px; cursor: pointer; color: #fff;
+  background: radial-gradient(circle at 50% 40%, #7e22ce, #1e1b4b 70%); /* Purple glow fading to navy. */
+}
+.gate-emoji { font-size: 5rem; animation: gate-bounce 1.2s ease-in-out infinite; }
+.gate-text { font-size: 1.2rem; font-weight: 800; }
+/* Gentle bob up and down with a slight wobble; loops forever. */
+@keyframes gate-bounce { 0%,100% { transform: translateY(0) rotate(-6deg); } 50% { transform: translateY(-14px) rotate(6deg); } }
+
+/* --- BIRTHDAY INTRO OVERLAY --------------------------------------------------
+   Full-screen fireworks canvas with big text on top (extras.js playBirthdayIntro). */
+#introOverlay { position: fixed; inset: 0; z-index: 5000; background: #080614; animation: intro-in 0.5s ease; }
+#introOverlay.closing { opacity: 0; transition: opacity 0.6s ease; } /* JS adds 'closing', then removes the element after 600ms. */
+#fwCanvas { position: absolute; inset: 0; width: 100%; height: 100%; } /* Fireworks drawn by JS. */
+.intro-text {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  pointer-events: none;                  /* Taps fall through to the overlay, which closes the intro. */
+}
+.intro-small { font-size: 1.2rem; font-weight: 800; color: #fbcfe8; animation: intro-pop 0.8s ease both 0.2s; }
+.intro-big {
+  font-size: 3.2rem; line-height: 1.05; font-weight: 900; color: #fff; margin-top: 10px;
+  text-shadow: 0 0 24px #c026d3, 0 0 48px #db2777;  /* Two glows: magenta close, pink wide. */
+  /* The cubic-bezier overshoots past 1 for a bouncy "pop"; 0.5s delay lets the
+     small line appear first. 'both' = hidden before the delay, held after. */
+  animation: intro-pop 0.9s cubic-bezier(.2,1.6,.4,1) both 0.5s;
+}
+.intro-tap { margin-top: 28px; font-size: 0.8rem; color: #94a3b8; animation: intro-pop 0.6s ease both 2s; } /* "Tap to continue" appears last. */
+@keyframes intro-in { from { opacity: 0; } to { opacity: 1; } }                             /* Overlay fades in. */
+@keyframes intro-pop { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: scale(1); } } /* Text grows into place. */
+
+/* --- ACCESSIBILITY: REDUCED MOTION -------------------------------------------
+   People can ask their phone to minimise animation (an OS accessibility
+   setting). This switches off the endless decorative loops (birthday shimmer,
+   bouncing gift, pulse ring) and the progress bar's sweep. The one-shot intro
+   still plays: it is a deliberate, requested celebration, not background motion. */
+@media (prefers-reduced-motion: reduce) {
+  .birthday-card, .gate-emoji, .hero-pulse-ring { animation: none !important; }
+  .progress-bar { transition: none !important; }
+}

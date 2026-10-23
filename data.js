@@ -22,7 +22,9 @@
      image              string  'hero' only. Photo URL for the avatar (null = emoji).
      audio              string  File to play first (relative to the site root).
      audioSequence      array   Several files played one after another (see birthday).
-     sequenceGap        number  Pause between sequence clips, in milliseconds.
+     sequenceGap        number|array  Pause between sequence clips, in milliseconds.
+                                A number applies to every gap; an array gives one
+                                gap per transition, e.g. [250, 500].
      sequenceFallbacks  array   Per-clip synth stand-ins: [{ id, ms }, ...] where
                                 'id' is a synth.js case and 'ms' is its approximate
                                 length so the next clip waits long enough.
@@ -30,21 +32,57 @@
      confetti           bool|number  true = 1 burst, a number = that many bursts.
      vibrate            array   Vibration pattern in ms (buzz, pause, buzz, ...).
      active             bool    REQUIRED. false hides the item completely.
+     birthdayOnly       bool    true -> app.js shows the item ONLY on the real
+                                 birthday (isBirthday below) or while developer
+                                 mode is on (8-second hold on the logo). The
+                                 birthday card uses this instead of tying
+                                 'active' to the date, so dev mode can reveal it.
+     durationMs         number  OPTIONAL. Estimated length in ms, used only for
+                                 the progress bar and the "still playing" timer
+                                 of synth-only sounds. Real recordings report
+                                 their own length, so this is rarely needed.
+
+   WHO READS WHAT (so you know where to look when something misbehaves)
+     data.js   -> publishes window.SOUNDBOARD_DATA and window.STIM_BIRTHDAY
+     app.js    -> reads SOUNDBOARD_DATA to build buttons and play sounds
+     extras.js -> reads STIM_BIRTHDAY (countdown, intro) and SOUNDBOARD_DATA
+                  (favourites, recents, search, audio preloading)
+     sw.js     -> has its OWN PRECACHE list of files: when you add a new audio
+                  file here, ALSO add it to PRECACHE in sw.js so it works
+                  offline from the very first visit.
    ========================================================================== */
 
-// 1. Check if today is October 23rd
-// A Date object holding the moment the page was loaded (local time).
-// Note: 'today' is currently only used by the commented-out check below.
+// 1. BIRTHDAY DATE LOGIC
+// A Date object holding the moment the page was loaded (local time on the
+// phone). Everything below is computed ONCE per page load.
 const today = new Date();
 
-// Note: JavaScript months are 0-indexed, so 9 = October
-// TESTING SWITCH: isBirthday is hardcoded to true so the birthday card always
-// shows while developing. For the real gift, DELETE "true;" and the leading
-// comment marker so the line becomes:
-//   const isBirthday = (today.getMonth() === 9 && today.getDate() === 23);
-// That expression is true only on the 23rd of October (any year), in the
-// phone's local timezone. Remember to bump ?v= and CACHE_NAME afterwards.
-const isBirthday = true; // Hardcoded to true for testing // (today.getMonth() === 9 && today.getDate() === 23);
+// Note: JavaScript months are 0-indexed, so 9 = October. To change the date,
+// edit BIRTHDAY_MONTH / BIRTHDAY_DAY below; nothing else needs to change.
+// (The old hardcoded "isBirthday = true" testing switch is gone: use developer
+// mode instead, which does not require editing code or bumping versions.)
+const BIRTHDAY_MONTH = 9;   // 0-indexed: 9 = October.
+const BIRTHDAY_DAY = 23;    // Day of the month.
+const COUNTDOWN_DAYS = 7;   // The countdown card appears only this many days before.
+
+// REAL CHECK: true only on Oct 23 (any year) in the phone's local timezone.
+// Used for the birthday intro, and (via app.js) the birthday card. Developer
+// mode can force those features on at any other time.
+const isBirthday = (today.getMonth() === BIRTHDAY_MONTH && today.getDate() === BIRTHDAY_DAY);
+
+// Whole days from today until the NEXT birthday (0 = today). Uses local
+// midnights so time-of-day never skews the count.
+const daysUntilBirthday = (() => {
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let target = new Date(today.getFullYear(), BIRTHDAY_MONTH, BIRTHDAY_DAY);
+  if (target < start) target = new Date(today.getFullYear() + 1, BIRTHDAY_MONTH, BIRTHDAY_DAY);
+  return Math.round((target - start) / 86400000);
+})();
+// Published on 'window' for extras.js (a separate file). It reads:
+//   isBirthday         -> show the "tap to open" gate and intro automatically
+//   daysUntilBirthday  -> the countdown card text (0 on the day itself)
+//   countdownDays      -> how close the date must be before the card appears
+window.STIM_BIRTHDAY = { isBirthday, daysUntilBirthday, countdownDays: COUNTDOWN_DAYS };
 
 // Exposed on 'window' so app.js (a separate script file) can read it.
 window.SOUNDBOARD_DATA = [
@@ -55,15 +93,19 @@ window.SOUNDBOARD_DATA = [
   // ---- BIRTHDAY CARD: shimmering purple card, only visible when isBirthday is true ----
   // 'audio' is kept as the first clip for compatibility, but because
   // 'audioSequence' exists, app.js uses the sequence instead:
-  //   bday1.m4a -> 500ms pause -> case.m4a -> 500ms pause -> bday2.m4a
+  //   bday1.m4a -> 250ms pause -> case.m4a -> 500ms pause -> bday2.m4a
+  // sequenceGap: [250, 500] is one gap PER transition (gap[0] follows clip 0,
+  // gap[1] follows clip 1). A single number (e.g. 500) applies to all of them.
   // sequenceFallbacks lines up BY POSITION with audioSequence:
   //   clip 0 (bday1.m4a) missing -> synth "birthday-part1", wait ~5.5s
   //   clip 1 (case.m4a)  missing -> synth "case",           wait ~1s
   //   clip 2 (bday2.m4a) missing -> synth "birthday-part2", wait ~5.5s
   // confetti: 4 -> four bursts, 300ms apart. The vibrate pattern is
   // buzz 200, rest 100, buzz 200, rest 100, long buzz 400.
-  // 'active: isBirthday' is what hides/shows the whole card.
-  { id: "birthday-surprise", type: "birthday", title: "HAPPY BIRTHDAY!", subtitle: "A special Oct 23rd surprise 🎈", icon: "🎂", audio: "bday1.m4a", audioSequence: ["bday1.m4a", "case.m4a", "bday2.m4a"], sequenceGap: 500, sequenceFallbacks: [{ id: "birthday-part1", ms: 5500 }, { id: "case", ms: 1000 }, { id: "birthday-part2", ms: 5500 }], confetti: 4, vibrate: [200, 100, 200, 100, 400], active: isBirthday },
+  // 'birthdayOnly: true' is what hides the card except on the real birthday
+  // or in developer mode (app.js checks it). 'active' stays true so that dev
+  // mode can reveal the card without editing this file.
+  { id: "birthday-surprise", type: "birthday", title: "HAPPY BIRTHDAY!", subtitle: "A special Oct 23rd surprise 🎈", icon: "🎂", audio: "bday1.m4a", audioSequence: ["bday1.m4a", "case.m4a", "bday2.m4a"], sequenceGap: [250, 500], sequenceFallbacks: [{ id: "birthday-part1", ms: 5500 }, { id: "case", ms: 1000 }, { id: "birthday-part2", ms: 5500 }], confetti: 4, vibrate: [200, 100, 200, 100, 400], birthdayOnly: true, active: true },
   
   // ---- FEATURED CARD: the gold "THE TRUMPET!" button ----
   // appendProcedural:true -> play the-trumpet.m4a, then when it ENDS, chain

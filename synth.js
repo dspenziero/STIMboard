@@ -7,8 +7,12 @@
    It is the offline / missing-file safety net for app.js.
 
    PUBLIC SURFACE
-   The only thing other files use is  window.playProceduralSound(id, skipVocals)
-   defined at the bottom. Everything above it is a private building block:
+   The main thing other files use is  window.playProceduralSound(id, skipVocals)
+   defined at the bottom. Two helpers for tap-to-stop and volume also live on
+   window: stopProceduralSound() and setSynthVolume(v) (see MASTER OUTPUT below).
+   Everything else is a private building block (extras.js also borrows
+   playBrassNote, playClap, playSubDrop and getAudioCtx for the birthday intro,
+   which works because top-level functions in a classic script are globals):
      getAudioCtx()      - lazily creates the single shared AudioContext
      speakText()        - text-to-speech wrapper
      playBrassNote()    - one synthesized trumpet-ish note
@@ -18,7 +22,7 @@
 
    WEB AUDIO CRASH COURSE
    Sound is built as a GRAPH of nodes wired together:
-     source (oscillator/noise) -> [filter] -> gain (volume) -> destination (speakers)
+     source (oscillator/noise) -> [filter] -> gain (volume) -> MASTER gain -> destination (speakers)
    Parameters (frequency, gain) can be SCHEDULED at exact future times on the
    audio clock (ctx.currentTime, in seconds). That is why every function below
    takes a 'startTime' instead of playing "now": the whole tune is scheduled
@@ -41,6 +45,45 @@ function getAudioCtx() {
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
 }
+
+// ---- MASTER OUTPUT (enables tap-to-stop for synth sounds) ----
+// WHY THIS EXISTS: Web Audio notes are SCHEDULED in advance (a whole tune can
+// be queued in one go), and there is no "cancel everything" call. So instead
+// of wiring each voice straight to the speakers (ctx.destination), every voice
+// connects to this ONE shared gain node, which connects to the speakers.
+// Disconnecting that single node instantly silences everything still queued.
+//
+// The node is created lazily and replaced after each stop, so the NEXT sound
+// always gets a fresh, connected master and plays normally.
+let masterGain = null;
+
+// Master volume, 0 (mute) to 1 (full). A plain window property so a future
+// volume slider can set it via setSynthVolume() below.
+window.synthVolume = 1;
+
+// Returns the shared master gain node, creating and connecting it if needed.
+// Every voice function (brass, clap, sub drop, riff) calls this instead of
+// using ctx.destination.
+function getMaster() {
+  const c = getAudioCtx();
+  if (!masterGain) {
+    masterGain = c.createGain();                    // A volume-control node...
+    masterGain.gain.value = window.synthVolume;     // ...set to the current volume...
+    masterGain.connect(c.destination);              // ...wired to the speakers.
+  }
+  return masterGain;
+}
+
+// Called by app.js's stopAllAudio() (tap-to-stop). Cuts off all queued synth
+// notes at once and cancels any speech. try/catch because disconnecting an
+// already-disconnected node can throw in some browsers.
+window.stopProceduralSound = function () {
+  if (masterGain) { try { masterGain.disconnect(); } catch (e) {} masterGain = null; }
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+};
+
+// Changes the master volume, including for a sound that is playing right now.
+window.setSynthVolume = function (v) { window.synthVolume = v; if (masterGain) masterGain.gain.value = v; };
 
 // Speaks 'text' aloud with the device's built-in voice.
 //   rate   : speed. 1.0 normal, <1 slower, >1 faster.
@@ -89,8 +132,9 @@ function playBrassNote(freq, startTime, duration) {
   gain.gain.exponentialRampToValueAtTime(0.2, startTime + 0.04);
   gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
 
-  // Wire the graph: oscillator -> filter -> gain -> speakers.
-  osc.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+  // Wire the graph: oscillator -> filter -> gain -> MASTER (-> speakers).
+  // getMaster() (not ctx.destination) is what makes tap-to-stop work.
+  osc.connect(filter); filter.connect(gain); gain.connect(getMaster());
 
   // Schedule start and stop. Stopping at the end lets the browser free the nodes.
   osc.start(startTime); osc.stop(startTime + duration);
@@ -119,8 +163,8 @@ function playClap(startTime) {
   gain.gain.setValueAtTime(0.7, startTime);
   gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.08);
 
-  // noise -> filter -> gain -> speakers, then schedule it.
-  noise.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+  // noise -> filter -> gain -> MASTER (-> speakers), then schedule it.
+  noise.connect(filter); filter.connect(gain); gain.connect(getMaster());
   noise.start(startTime); noise.stop(startTime + 0.08);
 }
 
@@ -142,7 +186,7 @@ function playSubDrop(startTime, startFreq = 160, endFreq = 40, dur = 0.4) {
   gain.gain.setValueAtTime(0.6, startTime);
   gain.gain.exponentialRampToValueAtTime(0.001, startTime + dur);
 
-  osc.connect(gain); gain.connect(ctx.destination);
+  osc.connect(gain); gain.connect(getMaster());
   osc.start(startTime); osc.stop(startTime + dur);
 }
 
@@ -163,7 +207,7 @@ function playTimbalandRiff(startTime) {
     // Punchy volume (0.5) fading out over 70ms.
     gain.gain.setValueAtTime(0.5, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
-    osc.connect(gain); gain.connect(ctx.destination);
+    osc.connect(gain); gain.connect(getMaster());
     osc.start(t); osc.stop(t + 0.07);
   }
 }

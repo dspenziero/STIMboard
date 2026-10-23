@@ -6,40 +6,34 @@
    everything it depends on already exists by the time it runs:
      - data.js   -> defines window.SOUNDBOARD_DATA (the list of buttons)
      - synth.js  -> defines window.playProceduralSound (the synth fallback)
+     - extras.js -> defines dev mode, favourites, progress bars, the intro...
+   Load order in index.html: data.js, synth.js, extras.js, app.js.
    What lives in here, in file order:
-     0. A "cache nuker" that deletes old Cache Storage entries on every load
+     0. (Removed) the old cache nuker; sw.js now owns freshness and offline
      1. Service worker registration + the Android "Install App" button logic
      2. The confetti / emoji particle engine (drawn on a fullscreen <canvas>)
-     3. The audio sequencer: playAudioSequence() and triggerStim()
+     3. The audio sequencer: now-playing tracking, stopAllAudio() (tap-to-stop),
+        playAudioSequence() and triggerStim()
      4. The DOM builder: renderSoundboard() turns SOUNDBOARD_DATA into buttons
+        (re-runnable: dev mode, search and filters call it again)
+
+   HOOKS INTO extras.js (all optional; each call is guarded with "if (window.x)"
+   so the soundboard still works if extras.js is missing)
+     isDevMode / isBirthdayNow  decide which items are visible
+     stimFilter(item)           search + favourites-only filtering
+     recordPlay(item)           feeds the "recently played" list
+     decorateCard(btn, item)    adds the progress bar and favourite star
+     progressStart / Stop       draw the progress bar on the playing card
+   HOOKS OUT (this file exposes on window for extras.js)
+     renderSoundboard, triggerStim, stopAllAudio
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
-   0. CACHE NUKER
-   --------------------------------------------------------------------------
-   Phones cache PWA files very aggressively. On every page load this block
-   asks the browser for the NAMES of every cache in Cache Storage and deletes
-   each one, so stale copies of the app can never survive.
-   IMPORTANT SIDE EFFECT: because this runs on EVERY load, it also wipes the
-   offline copies that sw.js saved on the previous visit. The service worker
-   re-fills the cache as files are re-fetched, but there is a race: if the
-   phone goes offline right after a nuke, there may be little left to serve.
-   (Behaviour is intentionally unchanged here; this note is documentation.)
+   0. (REMOVED) CACHE NUKER
+   The old code deleted every Cache Storage entry on each load, which broke
+   offline mode. sw.js now handles freshness (network-first, no-cache fetches,
+   old caches deleted on activate), so nothing is needed here.
    -------------------------------------------------------------------------- */
-// 'window.caches' only exists in secure contexts (https or localhost) and in
-// browsers that support the Cache Storage API, so we feature-detect first.
-if (window.caches) {
-  // caches.keys() returns a Promise that resolves to an array of cache names
-  // (for example ['stimboard-modular-v9']).
-  caches.keys().then(keys => {
-    // Loop over every cache name found...
-    keys.forEach(key => {
-      // ...and delete that cache. caches.delete() is async too, but we do not
-      // need to wait for it, so the returned Promise is deliberately ignored.
-      caches.delete(key);
-    });
-  });
-}
 
 /* --------------------------------------------------------------------------
    1. SERVICE WORKER & ANDROID INSTALL PROMPT
@@ -242,15 +236,88 @@ let sequenceToken = 0;
 // cancel a gap that is still counting down.
 let sequenceTimer = null;
 
+// ---- NOW-PLAYING TRACKING (powers tap-to-stop and the progress bar) ----
+// Only ONE thing plays at a time, so a single variable is enough.
+// { item, el } for the button that is currently sounding, or null when silent.
+//   item : the SOUNDBOARD_DATA entry (tap-to-stop compares against it)
+//   el   : the button element (gets the gold .is-playing look + progress bar)
+let nowPlaying = null;
+// Safety timer: synth sounds give no 'ended' event, so we clear the state
+// after an estimated time. Audio files clear it on their real 'ended' event.
+let playingWatchdog = null;
+
+// Mark a button as playing. 'estimateMs' is a guess at how long the sound
+// lasts; it drives the progress bar until a real length is known.
+function setNowPlaying(item, el, estimateMs) {
+  clearNowPlaying();                       // Reset any previous button first.
+  nowPlaying = { item, el };
+  if (el) el.classList.add('is-playing');  // Gold border + glow (styles.css).
+  if (window.progressStart) window.progressStart(el, estimateMs); // extras.js draws the bar.
+  // Watchdog at 2.5x the estimate: generous on purpose, because an over-long
+  // estimate only delays the "stop" look, while a too-short one would make a
+  // still-playing sound look finished and break tap-to-stop. Real recordings
+  // clear the state themselves on 'ended', so this mainly serves synth sounds.
+  playingWatchdog = setTimeout(clearNowPlaying, (estimateMs || 8000) * 2.5);
+}
+
+// Called once a real recording reports its true length (loadedmetadata).
+// Restarts the progress bar with the exact duration and tightens the watchdog.
+function updatePlayingDuration(ms) {
+  if (!nowPlaying) return;                 // Sound was already stopped: ignore.
+  if (window.progressStart) window.progressStart(nowPlaying.el, ms);
+  // +3000ms of slack so the watchdog never fires before the real 'ended'.
+  clearTimeout(playingWatchdog); playingWatchdog = setTimeout(clearNowPlaying, ms + 3000);
+}
+
+// Returns to the silent state: removes the gold look, resets the bar, forgets
+// the button. Safe to call when nothing is playing.
+function clearNowPlaying() {
+  clearTimeout(playingWatchdog); playingWatchdog = null;
+  if (nowPlaying && nowPlaying.el) nowPlaying.el.classList.remove('is-playing');
+  if (window.progressStop) window.progressStop(nowPlaying && nowPlaying.el);
+  nowPlaying = null;
+}
+
+// Silences EVERYTHING: the current <audio>, a running sequence (and its gap
+// timer), browser speech, and the synthesizer. Safe to call at any time.
+// Used by tap-to-stop, by tapping a different button, and the dev Stop button.
+//
+// PROTECTED-LOGIC NOTE: this deliberately sets onended/onerror to null BEFORE
+// pause(). Otherwise pausing could trigger the offline fallback (which would
+// start a synth sound right after we asked for silence). The normal
+// onerror/onended handlers in triggerStim() and playAudioSequence() are
+// unchanged and still run whenever a sound is NOT being stopped by the user.
+function stopAllAudio() {
+  // Bumping the ticket makes every running sequence see a stale token and quit.
+  sequenceToken++;
+  if (sequenceTimer) { clearTimeout(sequenceTimer); sequenceTimer = null; } // Cancel a pending gap between clips.
+  if (currentAudio) {                                // Detach handlers FIRST so a paused clip cannot fire a late fallback.
+    currentAudio.onended = null; currentAudio.onerror = null;
+    try { currentAudio.pause(); } catch (e) {}
+    currentAudio = null;
+  }
+  // Cut off any spoken words from the SpeechSynthesis API.
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  // synth.js disconnects its master output, silencing every scheduled note.
+  if (window.stopProceduralSound) window.stopProceduralSound();
+  clearNowPlaying();                                 // Reset the button look + progress bar.
+}
+
 // Plays item.audioSequence clip by clip. 'item' is one entry of SOUNDBOARD_DATA.
 function playAudioSequence(item) {
   // Claim a new ticket. This instantly "cancels" any sequence already running,
   // because their saved tokens are now out of date.
   const token = ++sequenceToken;
 
-  // Pause between clips in milliseconds. Use item.sequenceGap if it is a real
-  // number (0 is allowed), otherwise default to half a second.
-  const gapMs = typeof item.sequenceGap === 'number' ? item.sequenceGap : 500;
+  // Pause between clips in milliseconds. item.sequenceGap can be either:
+  //   - a single number (e.g. 500): the same pause after every clip, or
+  //   - an array (e.g. [250, 500]): gaps[i] is the pause AFTER clip i, before
+  //     clip i+1. So [250, 500] = 250ms after clip 0, 500ms after clip 1.
+  // Any missing/invalid entry defaults to half a second (0 is allowed).
+  const gapAfter = (index) => {
+    const g = Array.isArray(item.sequenceGap) ? item.sequenceGap[index] : item.sequenceGap;
+    return typeof g === 'number' ? g : 500;
+  };
 
   // The ordered list of file names, e.g. ["bday1.m4a", "case.m4a", "bday2.m4a"].
   const clips = item.audioSequence;
@@ -271,18 +338,21 @@ function playAudioSequence(item) {
   // Plays the clip at position 'index'. Calls itself for the next position.
   const playClip = (index) => {
     // Stop if this sequence was cancelled (stale token) or we ran past the end.
-    if (token !== sequenceToken || index >= clips.length) return;
+    if (token !== sequenceToken) return;
+    // Ran past the last clip: the whole sequence is finished, so reset the
+    // button look and progress bar.
+    if (index >= clips.length) { clearNowPlaying(); return; }
 
     // 'advanced' makes sure we move to the next clip only ONCE per clip. A
     // failing file can fire BOTH the 'error' event and the play() rejection,
     // and without this guard we would skip ahead twice.
     let advanced = false;
 
-    // Called when the clip finishes normally: wait 'gapMs', then play the next.
+    // Called when the clip finishes normally: wait this clip's gap (gapAfter), then play the next.
     const next = () => {
       if (advanced || token !== sequenceToken) return; // Already handled, or cancelled.
       advanced = true;
-      sequenceTimer = setTimeout(() => playClip(index + 1), gapMs);
+      sequenceTimer = setTimeout(() => playClip(index + 1), gapAfter(index));
     };
 
     // Called when the clip cannot be played (missing file, decode error, autoplay block).
@@ -296,10 +366,10 @@ function playAudioSequence(item) {
 
       if (fb && window.playProceduralSound) {
         // Play the stand-in. Synth sounds give no 'ended' event, so we wait for
-        // its estimated length (fb.ms, default 1000) PLUS the usual gap, then
+        // its estimated length (fb.ms, default 1000) PLUS this clip's gap, then
         // continue with the next clip.
         window.playProceduralSound(fb.id, false);
-        sequenceTimer = setTimeout(() => playClip(index + 1), (fb.ms || 1000) + gapMs);
+        sequenceTimer = setTimeout(() => playClip(index + 1), (fb.ms || 1000) + gapAfter(index));
       } else if (index === 0) {
         // No per-clip stand-in AND it was the first clip: play the whole-item synth sound.
         fallback();
@@ -328,6 +398,18 @@ function playAudioSequence(item) {
 // The click handler shared by EVERY button. 'item' is its SOUNDBOARD_DATA
 // entry; 'el' is the button element (used for the 'playing' glow animation).
 function triggerStim(item, el) {
+  // TAP-TO-STOP: tapping the button that is already playing stops it, and we
+  // return immediately so the tap does NOT also start the sound again.
+  if (nowPlaying && nowPlaying.item === item) { stopAllAudio(); return; }
+  // Tapping a DIFFERENT button stops whatever was playing first, so two
+  // sounds can never overlap. (Harmless when nothing is playing.)
+  stopAllAudio();
+  // Remember it for the "recently played" list (extras.js; no-op if absent).
+  if (window.recordPlay) window.recordPlay(item);
+  // Estimated length for the progress bar / watchdog. data.js 'durationMs'
+  // wins; otherwise guess 14s for the birthday sequence and 6s for the rest.
+  // Real recordings replace the guess with their true length once loaded.
+  setNowPlaying(item, el, item.durationMs || (item.audioSequence ? 14000 : 6000));
   // HAPTICS: vibrate the phone with the item's pattern (array of milliseconds,
   // alternating vibrate/pause, e.g. [200,100,200] = buzz, rest, buzz).
   // 'vibrate' in navigator is false on desktop and iOS, so we guard it.
@@ -358,10 +440,20 @@ function triggerStim(item, el) {
 
     // Create the audio element for the recording and make it the current one.
     currentAudio = new Audio(item.audio);
+    // Once the browser knows the file's real length, use it for the progress
+    // bar. appendProcedural items add 2.5s of room for the chained synth notes.
+    // isFinite() guards against 'Infinity'/NaN, which some streams report.
+    // (An EXTRA listener: it does not touch the protected onerror/onended below.)
+    const extraMs = item.appendProcedural ? 2500 : 0;
+    currentAudio.addEventListener('loadedmetadata', () => { if (isFinite(currentAudio.duration)) updatePlayingDuration(currentAudio.duration * 1000 + extraMs); });
 
     // ONERROR (protected): the file failed to load -> play the full synth
     // version for this id, INCLUDING speech (second argument false = do not skip vocals).
     currentAudio.onerror = () => { if (window.playProceduralSound) window.playProceduralSound(item.id, false); };
+    // Real recording finished and nothing is chained after it -> clear the
+    // playing state. (appendProcedural overrides onended just below; the
+    // watchdog timer clears the state for those.)
+    currentAudio.onended = () => { clearNowPlaying(); };
 
     // ONENDED (protected): only for 'appendProcedural' items. After the real
     // recording finishes, chain the synth sound onto the end. 'true' = skip the
@@ -398,9 +490,20 @@ function renderSoundboard() {
   // Fall back to an empty list if data.js failed to define the data.
   const data = window.SOUNDBOARD_DATA || [];
 
-  // Only items with active:true are shown. This is how the birthday card
-  // appears/disappears (its 'active' is the isBirthday flag from data.js).
-  const activeStims = data.filter(item => item.active);
+  // VISIBILITY RULES. An item is shown only if ALL of these are true:
+  //   1. item.active is true (the master on/off switch in data.js), AND
+  //   2. it is not birthdayOnly, OR it is the real birthday, OR dev mode is on
+  //      (this is how the birthday card appears/disappears), AND
+  //   3. it passes the dev-mode search / favourites filter (window.stimFilter,
+  //      which always returns true for normal users).
+  // isDevMode()/isBirthdayNow() come from extras.js (loaded before this file);
+  // the "? ... : false" fallbacks keep the app working if it is missing.
+  const dev = window.isDevMode ? window.isDevMode() : false;
+  const bday = window.isBirthdayNow ? window.isBirthdayNow() : false;
+  const activeStims = data.filter(item => item.active && (!item.birthdayOnly || bday || dev) && (!window.stimFilter || window.stimFilter(item)));
+
+  // Re-runnable: wipe whatever a previous render put in the mount points.
+  [heroSlot, featuredSlot, gridContainer].forEach(m => { if (m) m.innerHTML = ''; });
 
   // Update the header pill, e.g. "21 Stims".
   if (slotCounter) slotCounter.textContent = `${activeStims.length} Stims`;
@@ -420,6 +523,10 @@ function renderSoundboard() {
       heroBtn.innerHTML = `<div class="hero-avatar-wrapper">${imgMarkup}<div class="hero-pulse-ring"></div></div><div class="hero-info"><span class="hero-title">${item.title}</span><span class="hero-sub">${item.subtitle}</span></div>`;
       // On tap, run the shared handler. The arrow function captures THIS item and button.
       heroBtn.addEventListener('click', () => triggerStim(item, heroBtn));
+      // data-id lets extras.js find this card later (e.g. to update its star).
+      heroBtn.dataset.id = item.id;
+      // extras.js hook: adds the progress bar (and a dev-only favourite star).
+      if (window.decorateCard) window.decorateCard(heroBtn, item);
       heroSlot.appendChild(heroBtn);
     } else if (item.type === 'featured' && featuredSlot) {
       // ---- FEATURED CARD (The Trumpet) ----
@@ -427,13 +534,21 @@ function renderSoundboard() {
       featBtn.className = 'featured-card';
       featBtn.innerHTML = `<div class="featured-content"><span class="featured-title">${item.title}</span><span class="featured-sub">${item.subtitle}</span></div><span class="featured-icon">${item.icon || "🎺"}</span>`;
       featBtn.addEventListener('click', () => triggerStim(item, featBtn));
+      // data-id lets extras.js find this card later (e.g. to update its star).
+      featBtn.dataset.id = item.id;
+      // extras.js hook: adds the progress bar (and a dev-only favourite star).
+      if (window.decorateCard) window.decorateCard(featBtn, item);
       featuredSlot.appendChild(featBtn);
     } else if (item.type === 'birthday' && featuredSlot) {
-      // ---- BIRTHDAY CARD (only present when active/isBirthday is true) ----
+      // ---- BIRTHDAY CARD (only present on the birthday or in dev mode) ----
       const bdayBtn = document.createElement('button');
       bdayBtn.className = 'birthday-card'; // Has the shimmering gradient animation.
       bdayBtn.innerHTML = `<div class="birthday-content"><span class="birthday-title">${item.title}</span><span class="birthday-sub">${item.subtitle}</span></div><span class="birthday-icon">${item.icon || "🎂"}</span>`;
       bdayBtn.addEventListener('click', () => triggerStim(item, bdayBtn));
+      // data-id lets extras.js find this card later (e.g. to update its star).
+      bdayBtn.dataset.id = item.id;
+      // extras.js hook: adds the progress bar (and a dev-only favourite star).
+      if (window.decorateCard) window.decorateCard(bdayBtn, item);
       featuredSlot.appendChild(bdayBtn);
     } else {
       // ---- ORDINARY ITEM: just file it under its group for now ----
@@ -464,6 +579,10 @@ function renderSoundboard() {
       // Icon on top, title + subtitle underneath. Default icon is a speaker.
       gridBtn.innerHTML = `<span class="stim-icon">${item.icon || "🔊"}</span><div class="stim-text"><span class="stim-title">${item.title}</span><span class="stim-sub">${item.subtitle}</span></div>`;
       gridBtn.addEventListener('click', () => triggerStim(item, gridBtn));
+      gridBtn.dataset.id = item.id;
+      // extras.js hook: adds the favourite star (dev mode only) and the
+      // progress bar. Safe no-op if extras.js is missing.
+      if (window.decorateCard) window.decorateCard(gridBtn, item);
       grid.appendChild(gridBtn);
     });
 
@@ -491,6 +610,11 @@ function renderSoundboard() {
     }
   });
 }
+
+// Expose the builder so extras.js can re-render (dev mode, search, filters).
+window.renderSoundboard = renderSoundboard;
+window.triggerStim = triggerStim;
+window.stopAllAudio = stopAllAudio;
 
 // Run the builder as soon as the DOM is ready. Because app.js is loaded at the
 // very end of <body>, the DOM is usually ALREADY parsed, so the second branch
