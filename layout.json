@@ -1,4 +1,7 @@
 {
   "version": 1,
-  "groups": []
+  "groups": [],
+  "collapse": {
+    "Misc Stims": true
+  }
 }
