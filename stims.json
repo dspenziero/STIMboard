@@ -1,14 +1,1 @@
-[
-  {
-    "id": "testttt",
-    "title": "TESTTTT",
-    "subtitle": "ttttt",
-    "icon": "🔊",
-    "group": "Misc Stims",
-    "audio": "testttt.m4a",
-    "vibrate": [
-      80
-    ],
-    "active": true
-  }
-]
+[]
