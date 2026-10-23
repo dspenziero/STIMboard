@@ -627,6 +627,10 @@ window.buildDevButtons = function () {
   // 1. Replay the full birthday intro at any time.
   // Opens the quick "Add stim" form (Part 6): audio + title -> committed to GitHub.
   mk('➕ Add stim', () => window.openAddStim && window.openAddStim());
+  // GitHub connection settings (owner, repo, token) on their own screen.
+  mk('⚙️ GitHub settings', () => window.openGhSettings && window.openGhSettings());
+  // The persistent debug log from log.js, with copy / clear.
+  mk('📋 View log', () => window.openLogViewer && window.openLogViewer());
   mk('🎆 Test birthday intro', playBirthdayIntro);
   // 2. Forget that the intro was shown today, so the gate appears again on next launch.
   mk('🔁 Reset intro (show again)', () => { try { localStorage.removeItem(INTRO_KEY); } catch (e) {} showToast('Intro will show again on the next birthday launch'); });
@@ -734,18 +738,32 @@ setTimeout(() => {
    DELETE them. Built-in stims from data.js are not editable here: change them
    in the code.
 
-   THE TOKEN
+   THE TOKEN AND THE GITHUB SETTINGS SCREEN
    The API needs a personal access token. It is stored ONLY in this phone's
-   localStorage (never in the repo). The form has buttons to replace it (type a
-   new one and save) and to clear it from this phone.
+   localStorage (never in the repo). Owner, repo, branch and token live on their
+   OWN screen (openGhSettings), separate from the stim form: Save, Clear saved
+   token, Show/Hide, and Test connection (checks the repo is reachable without
+   writing anything). The saved token is never put back into the field; leaving
+   it blank keeps the saved one.
+
+   LOGGING
+   Every GitHub call, form action and audio failure is written to the debug log
+   from log.js (tokens are redacted). Dev mode has a View log button to read,
+   copy or clear it. GitHub errors are translated into plain English (ghExplain)
+   while the raw server reply goes to the log.
 
    PIECES, in file order
-     loadUserStims / cacheUserAudio      fetch stims.json, merge, cache audio
-     ghLoad/ghSave/ghClearToken/ghGuess  saved GitHub settings
+     loadUserStims / cacheUserAudio        fetch stims.json, merge, cache audio
+     ghLoad/ghSave/ghClearToken/ghGuess    saved GitHub settings
+     ghExplain/ghFetch/ghFail              friendly errors + logging for API calls
      ghUrl/ghHeaders/ghGet/ghPut/ghDelete  thin wrappers over the GitHub API
-     forgetCachedAudio                   drop a file from the offline caches
-     fileToBase64/utf8ToB64/b64ToUtf8    base64 helpers (the API uses base64)
-     openAddStim / saveStim / deleteStim the form and its two actions
+     testGh                                the Test connection check
+     forgetCachedAudio                     drop a file from the offline caches
+     fileToBase64/utf8ToB64/b64ToUtf8      base64 helpers (the API uses base64)
+     openSheet/makeStatus/readCfg          shared screen helpers
+     openGhSettings                        the GitHub settings screen
+     openAddStim / saveStim / deleteStim   the stim form and its two actions
+     openLogViewer                         the debug log screen
    ========================================================================== */
 
 /* ---- LOADING ---- */
@@ -811,51 +829,99 @@ function ghGuess() {
 }
 
 /* ---- GITHUB API WRAPPERS ---- */
+// Plain-English cause for an HTTP status. The raw server reply goes to the log
+// instead, so the on-screen message stays readable.
+function ghExplain(status) {
+  switch (status) {
+    case 401: return 'GitHub rejected the token (401). It may be mistyped, expired or revoked. Open GitHub settings and paste a new one.';
+    case 403: return 'GitHub refused the request (403). The token probably lacks "Contents: Read and write" for this repo, or a rate limit was hit.';
+    case 404: return 'GitHub could not find that (404). Check the owner, repo and branch in GitHub settings. A fine-grained token also gives 404 when it has no access to the repo.';
+    case 409: return 'The file changed on GitHub while saving (409). Please try again.';
+    case 422: return 'GitHub rejected the data (422). The branch name may be wrong.';
+    default: return 'GitHub returned an error (' + status + ').';
+  }
+}
+
+// fetch() with logging. A thrown fetch means the request never got an answer
+// (offline, blocked, DNS), which is reported separately from an HTTP error.
+async function ghFetch(url, opts, what) {
+  const t0 = Date.now();
+  let r;
+  try { r = await fetch(url, opts); }
+  catch (e) {
+    stimLog.error('github', what + ': network failure', e);
+    throw new Error('Could not reach GitHub. Check your connection and try again.');
+  }
+  stimLog.info('github', what + ' -> ' + r.status, { ms: Date.now() - t0 });
+  return r;
+}
+
+// Logs the server's reply for a failed request, then throws the friendly error.
+async function ghFail(r, what) {
+  let detail = ''; try { detail = (await r.text()).slice(0, 200); } catch (e) {}
+  stimLog.error('github', what + ' failed (' + r.status + ')', detail);
+  const err = new Error(ghExplain(r.status)); err.status = r.status; throw err;
+}
+
 // URL of a file in the repo through the contents API. Each path segment is
-// encoded separately so a name with spaces or symbols stays valid but the "/"
-// separators survive. 'withRef' adds ?ref=BRANCH, which GET requests need to
-// read from a branch other than the default.
+// encoded separately so odd characters stay valid but the "/" separators
+// survive. 'withRef' adds ?ref=BRANCH, which GET needs to read a non-default branch.
 function ghUrl(cfg, path, withRef) {
   return 'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/contents/' +
     path.split('/').map(encodeURIComponent).join('/') + (withRef ? '?ref=' + encodeURIComponent(cfg.branch) : '');
 }
 
-// Headers every API call needs: the token (Bearer = "act as this token's
-// owner"), GitHub's JSON media type, and JSON for request bodies.
+// Headers every call needs: the token (Bearer = "act as this token's owner"),
+// GitHub's JSON media type, and JSON for request bodies.
 function ghHeaders(cfg) {
   return { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' };
 }
 
-// Reads a file's metadata: { sha, content (base64), ... }. Returns null when
-// the file does not exist (HTTP 404). 'no-store' stops the browser reusing an
-// old answer, which matters because the sha must be CURRENT for writes.
+// Reads a file's metadata { sha, content (base64) }. Returns null when the file
+// does not exist (404). 'no-store' stops the browser reusing an old answer,
+// which matters because the sha must be CURRENT for writes.
 async function ghGet(cfg, path) {
-  const r = await fetch(ghUrl(cfg, path, true), { headers: ghHeaders(cfg), cache: 'no-store' });
+  const what = 'GET ' + path;
+  const r = await ghFetch(ghUrl(cfg, path, true), { headers: ghHeaders(cfg), cache: 'no-store' }, what);
   if (r.status === 404) return null;
-  if (!r.ok) throw new Error('GitHub ' + r.status + ': ' + (await r.text()).slice(0, 120));
+  if (!r.ok) await ghFail(r, what);
   return r.json();
 }
 
-// Creates or updates a file with a commit. 'base64' is the new content. 'sha'
-// is REQUIRED when the file already exists: it is the version being replaced,
-// and GitHub answers 409 if that is no longer the latest, which prevents
-// silently overwriting someone else's change.
+// Creates or updates a file with a commit. 'sha' is REQUIRED when the file
+// already exists: it names the version being replaced, and GitHub answers 409
+// if that is no longer the latest, preventing a silent overwrite.
 async function ghPut(cfg, path, base64, message, sha) {
+  const what = 'PUT ' + path + ' (' + Math.round(base64.length * 0.75 / 1024) + ' KB)';
   const body = { message: message, content: base64, branch: cfg.branch };
   if (sha) body.sha = sha;
-  const r = await fetch(ghUrl(cfg, path, false), { method: 'PUT', headers: ghHeaders(cfg), body: JSON.stringify(body) });
-  if (!r.ok) throw new Error('GitHub ' + r.status + ': ' + (await r.text()).slice(0, 120));
+  const r = await ghFetch(ghUrl(cfg, path, false), { method: 'PUT', headers: ghHeaders(cfg), body: JSON.stringify(body) }, what);
+  if (!r.ok) await ghFail(r, what);
   return r.json();
 }
 
-// Deletes a file with a commit. The CURRENT sha proves we are deleting the
-// version we think we are.
+// Deletes a file with a commit. The CURRENT sha proves we delete the version we think we do.
 async function ghDelete(cfg, path, sha, message) {
-  const r = await fetch(ghUrl(cfg, path, false), {
-    method: 'DELETE', headers: ghHeaders(cfg),
-    body: JSON.stringify({ message: message, sha: sha, branch: cfg.branch })
-  });
-  if (!r.ok) throw new Error('GitHub ' + r.status + ': ' + (await r.text()).slice(0, 120));
+  const what = 'DELETE ' + path;
+  const r = await ghFetch(ghUrl(cfg, path, false), {
+    method: 'DELETE', headers: ghHeaders(cfg), body: JSON.stringify({ message: message, sha: sha, branch: cfg.branch })
+  }, what);
+  if (!r.ok) await ghFail(r, what);
+}
+
+// Checks that the owner/repo/token combination works, without writing anything.
+// Writing rights can only be confirmed by a real save, so the message says so.
+async function testGh(cfg, status) {
+  status('Testing…');
+  try {
+    const r = await ghFetch('https://api.github.com/repos/' + encodeURIComponent(cfg.owner) + '/' + encodeURIComponent(cfg.repo),
+      { headers: ghHeaders(cfg), cache: 'no-store' }, 'TEST repo');
+    if (!r.ok) await ghFail(r, 'TEST repo');
+    const info = await r.json();
+    const file = await ghGet(cfg, 'stims.json');
+    status('✅ Connected to ' + info.full_name + '. ' + (file ? 'stims.json found.' : 'stims.json not found yet (it will be created).') +
+      ' Write access is only confirmed when you save a stim.');
+  } catch (e) { status('❌ ' + e.message, true); }
 }
 
 // Drops a file from EVERY service-worker cache, so a deleted or replaced audio
@@ -882,116 +948,162 @@ function fileToBase64(file) {
 function utf8ToB64(s) { return btoa(unescape(encodeURIComponent(s))); }
 function b64ToUtf8(b) { return decodeURIComponent(escape(atob(b.replace(/\s/g, '')))); }
 
-/* ---- THE ADD / EDIT FORM: small helpers ---- */
+/* ---- SHEETS (full-screen panels) AND SMALL HELPERS ---- */
 // Turns a title into a safe id/filename piece: "Rock On!" -> "rock-on".
-// Lower-cases, collapses every run of other characters into one "-", trims
-// stray dashes, caps the length at 40, and never returns an empty string.
 function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'stim'; }
 
-// Returns a function that shows a message in the form's status line.
-// Pass a second argument of true to show it in red as an error.
-function makeStatus(sheet) {
-  return (msg, bad) => { const s = sheet.querySelector('#asStatus'); s.textContent = msg; s.className = bad ? 'bad' : ''; };
+// Creates a full-screen panel with the given id and markup (replacing any panel
+// with the same id). Markup passed in is fixed text, never user data.
+function openSheet(id, html) {
+  const old = document.getElementById(id); if (old) old.remove();
+  const s = document.createElement('div'); s.id = id; s.innerHTML = html;
+  document.body.appendChild(s);
+  return s;
 }
 
-// Reads the GitHub settings from the open form, checks them and remembers them.
-// Returns the settings object, or null after showing an error message.
-function readCfg(sheet, status) {
-  const q = (id) => sheet.querySelector(id);
-  const cfg = { owner: q('#asOwner').value.trim(), repo: q('#asRepo').value.trim(), branch: q('#asBranch').value.trim() || 'main', token: q('#asToken').value.trim() };
+// Returns a function that shows a message in a sheet's status line (red if 'bad').
+function makeStatus(sheet, sel) {
+  return (msg, bad) => { const s = sheet.querySelector(sel || '#asStatus'); s.textContent = msg; s.className = bad ? 'bad' : ''; };
+}
+
+// Saved GitHub settings merged over the address-based guesses.
+function ghConfig() { return Object.assign(ghGuess(), ghLoad()); }
+
+// Returns the saved settings if complete. Otherwise shows a message and returns null.
+function readCfg(status) {
+  const cfg = ghConfig();
   if (!cfg.owner || !cfg.repo || !cfg.token) {
-    q('#asSettings').open = true;                         // Reveal the fields that need filling in.
-    status('Fill in the GitHub owner, repo and token.', true);
+    stimLog.warn('github', 'settings incomplete', { owner: !!cfg.owner, repo: !!cfg.repo, token: !!cfg.token });
+    status('GitHub is not set up yet. Tap "GitHub settings" below.', true);
     return null;
   }
-  ghSave(cfg);                                            // Remember them for next time.
   return cfg;
 }
 
-// Text for the small line under the token field, so you can tell at a glance
-// whether a token is stored on this phone. Never shows the token itself.
-function tokenNote(hasToken) {
-  return hasToken ? 'A token is saved on this phone. To replace it, type a new one and tap Save. To remove it, tap Clear saved token.'
-                  : 'No token saved yet. Paste one here.';
+// One line describing the saved settings. Shows only the LAST 4 characters of
+// the token, enough to tell which token is saved without revealing it.
+function ghSummary() {
+  const c = ghConfig();
+  if (!c.owner || !c.repo) return 'GitHub is not set up yet.';
+  return c.owner + '/' + c.repo + ' (' + (c.branch || 'main') + ') · ' + (c.token ? 'token saved (…' + c.token.slice(-4) + ')' : 'NO TOKEN SAVED');
 }
 
-/* ---- THE ADD / EDIT FORM ITSELF ---- */
-// Opens the form as a full-screen sheet. With no argument it ADDS a stim; with
-// an item (a user stim) it EDITS that stim and also offers Delete.
+/* ---- THE GITHUB SETTINGS SCREEN ---- */
+// Its own screen, so settings can be changed without opening the stim form.
+// 'onDone' runs when it closes (the stim form uses it to refresh its summary).
+function openGhSettings(onDone) {
+  const sheet = openSheet('ghSettingsSheet',
+    '<div class="as-card"><h2>⚙️ GitHub settings</h2>' +
+    '<label>Owner<input id="gsOwner" type="text" autocapitalize="none"></label>' +
+    '<label>Repo<input id="gsRepo" type="text" autocapitalize="none"></label>' +
+    '<label>Branch<input id="gsBranch" type="text" autocapitalize="none"></label>' +
+    '<label>Access token<input id="gsToken" type="password" autocomplete="off"></label>' +
+    '<div class="as-row"><button type="button" id="gsShow">👁 Show</button><button type="button" id="gsClear">🗑️ Clear saved token</button></div>' +
+    '<p class="as-hint" id="gsNote"></p>' +
+    '<p class="as-hint">The token stays on this phone only. Use a fine-grained token with <b>Contents: Read and write</b> for this one repo.</p>' +
+    '<div id="gsStatus" role="status"></div>' +
+    '<div class="as-row"><button type="button" id="gsTest">🔌 Test connection</button><button type="button" id="gsSave">Save</button></div>' +
+    '<div class="as-row"><button type="button" id="gsClose">Close</button></div></div>');
+  const q = (id) => sheet.querySelector(id), status = makeStatus(sheet, '#gsStatus');
+  const cfg = ghConfig();
+  q('#gsOwner').value = cfg.owner || ''; q('#gsRepo').value = cfg.repo || ''; q('#gsBranch').value = cfg.branch || 'main';
+  // The saved token is never put back into the field. Blank means "keep the saved one".
+  const refresh = () => {
+    const has = !!ghConfig().token;
+    q('#gsToken').placeholder = has ? 'Saved. Leave blank to keep it.' : 'github_pat_...';
+    q('#gsNote').textContent = ghSummary();
+  };
+  refresh();
+  // The values currently typed, using the saved token when the field is blank.
+  const typed = () => ({ owner: q('#gsOwner').value.trim(), repo: q('#gsRepo').value.trim(), branch: q('#gsBranch').value.trim() || 'main',
+                         token: q('#gsToken').value.trim() || ghConfig().token || '' });
+
+  q('#gsShow').addEventListener('click', () => {
+    const f = q('#gsToken'), showing = f.type === 'text';
+    f.type = showing ? 'password' : 'text'; q('#gsShow').textContent = showing ? '👁 Show' : '🙈 Hide';
+  });
+  q('#gsSave').addEventListener('click', () => {
+    const c = typed();
+    if (!c.owner || !c.repo) return status('Enter the owner and the repo.', true);
+    if (!c.token) return status('Paste an access token.', true);
+    ghSave(c); q('#gsToken').value = ''; refresh();
+    stimLog.info('github', 'settings saved', { owner: c.owner, repo: c.repo, branch: c.branch, tokenEnd: c.token.slice(-4) });
+    status('Saved ✓');
+  });
+  q('#gsClear').addEventListener('click', () => {
+    if (!confirm('Remove the saved GitHub token from this phone? It stays valid on GitHub until you revoke it there.')) return;
+    ghClearToken(); q('#gsToken').value = ''; refresh();
+    stimLog.info('github', 'token cleared');
+    status('Token cleared from this phone.');
+  });
+  q('#gsTest').addEventListener('click', () => {
+    const c = typed();
+    if (!c.owner || !c.repo || !c.token) return status('Fill in owner, repo and a token first.', true);
+    testGh(c, status);
+  });
+  q('#gsClose').addEventListener('click', () => { sheet.remove(); if (onDone) onDone(); });
+}
+window.openGhSettings = openGhSettings;
+
+/* ---- THE ADD / EDIT FORM ---- */
+// Opens the form. With no argument it ADDS a stim; with an item (a user stim)
+// it EDITS that stim and also offers Delete. GitHub settings are NOT in here:
+// the summary line shows what is saved and the button opens the settings screen.
 function openAddStim(editItem) {
-  let sheet = document.getElementById('addStimSheet');
-  if (sheet) { sheet.remove(); }                          // Rebuild fresh each time.
   const editing = !!editItem;
-  const cfg = Object.assign(ghGuess(), ghLoad());         // Saved values win over guesses.
-  sheet = document.createElement('div'); sheet.id = 'addStimSheet';
-  // Fixed markup with no user data inside, so innerHTML is safe. Every value
-  // (which could contain quotes) is assigned below through .value/.textContent.
-  sheet.innerHTML =
-    '<div class="as-card">' +
-    '<h2 id="asHeading"></h2>' +
+  const sheet = openSheet('addStimSheet',
+    '<div class="as-card"><h2 id="asHeading"></h2>' +
     '<label><span id="asFileLabel">Audio file</span><input id="asFile" type="file" accept="audio/*,.m4a,.mp3,.wav,.ogg"></label>' +
+    '<div id="asFileInfo" class="as-hint"></div>' +
     '<label>Title<input id="asTitle" type="text" placeholder="e.g. Rock Solid"></label>' +
     '<label>Subtitle<input id="asSub" type="text" placeholder="e.g. Inside joke #12"></label>' +
     '<div class="as-row"><label>Emoji<input id="asIcon" type="text" value="🔊" maxlength="4"></label>' +
     '<label>Group<input id="asGroup" type="text" value="Misc Stims"></label></div>' +
-    '<details id="asSettings"><summary>GitHub settings</summary>' +
-    '<label>Owner<input id="asOwner" type="text" autocapitalize="none"></label>' +
-    '<label>Repo<input id="asRepo" type="text" autocapitalize="none"></label>' +
-    '<label>Branch<input id="asBranch" type="text" autocapitalize="none"></label>' +
-    '<label>Access token<input id="asToken" type="password" autocomplete="off" placeholder="github_pat_..."></label>' +
-    '<div class="as-row"><button type="button" id="asShowToken">👁 Show</button><button type="button" id="asClearToken">🗑️ Clear saved token</button></div>' +
-    '<p class="as-hint" id="asTokenNote"></p>' +
-    '<p class="as-hint">Saved only on this phone. Needs a fine-grained token with <b>Contents: Read and write</b> for this one repo.</p>' +
-    '</details>' +
+    '<div id="asGh" class="as-ghline"><span id="asGhText"></span><button type="button" id="asGhBtn">⚙️ GitHub settings</button></div>' +
     '<div id="asStatus" role="status"></div>' +
     '<div class="as-row"><button type="button" id="asCancel">Cancel</button><button type="button" id="asSave"></button></div>' +
-    '<div id="asDeleteRow"></div>' +
-    '</div>';
-  document.body.appendChild(sheet);
-  const q = (id) => sheet.querySelector(id);
+    '<div id="asDeleteRow"></div></div>');
+  const q = (id) => sheet.querySelector(id), status = makeStatus(sheet);
+  stimLog.info('form', editing ? 'edit form opened' : 'add form opened', editing ? { id: editItem.id } : undefined);
 
-  // Fill the settings from saved/guessed values.
-  q('#asOwner').value = cfg.owner || '';
-  q('#asRepo').value = cfg.repo || '';
-  q('#asBranch').value = cfg.branch || 'main';
-  q('#asToken').value = cfg.token || '';
-  q('#asTokenNote').textContent = tokenNote(!!cfg.token);
-  if (!cfg.token) q('#asSettings').open = true;           // First time: show what is needed.
+  // The saved settings summary, with a button that opens the settings screen.
+  const showGh = () => { q('#asGhText').textContent = ghSummary(); };
+  showGh();
+  q('#asGhBtn').addEventListener('click', () => openGhSettings(showGh));
+  if (!ghConfig().token) status('Set up GitHub first (tap "GitHub settings").', true);
 
-  // SHOW / HIDE: flips the field between dots and readable text so you can
-  // check what you pasted. It starts hidden every time the form opens.
-  q('#asShowToken').addEventListener('click', () => {
-    const f = q('#asToken'), showing = f.type === 'text';
-    f.type = showing ? 'password' : 'text';
-    q('#asShowToken').textContent = showing ? '👁 Show' : '🙈 Hide';
-  });
-
-  // CLEAR SAVED TOKEN: confirms, removes ONLY the token from this phone's
-  // storage (owner/repo/branch stay), and empties the field. It does not revoke
-  // the token on GitHub: do that on GitHub's token page if it was exposed.
-  q('#asClearToken').addEventListener('click', () => {
-    if (!confirm('Remove the saved GitHub token from this phone? You will need to paste a token again before saving stims.')) return;
-    ghClearToken();
-    q('#asToken').value = '';
-    q('#asTokenNote').textContent = tokenNote(false);
-    makeStatus(sheet)('Token cleared from this phone. (It is still valid on GitHub until you revoke it there.)');
-  });
-
-  // Heading, button labels and fields differ between add and edit.
   q('#asHeading').textContent = editing ? '✏️ Edit stim' : '➕ Add a stim';
   q('#asSave').textContent = editing ? 'Save changes' : 'Save stim';
   if (editing) {
     q('#asFileLabel').textContent = 'Replace audio (optional): ' + editItem.audio;
-    q('#asTitle').value = editItem.title || '';
-    q('#asSub').value = editItem.subtitle || '';
-    q('#asIcon').value = editItem.icon || '🔊';
-    q('#asGroup').value = editItem.group || 'Misc Stims';
-    // The Delete button exists only when editing.
+    q('#asTitle').value = editItem.title || ''; q('#asSub').value = editItem.subtitle || '';
+    q('#asIcon').value = editItem.icon || '🔊'; q('#asGroup').value = editItem.group || 'Misc Stims';
     const del = document.createElement('button');
     del.type = 'button'; del.id = 'asDelete'; del.textContent = '🗑️ Delete this stim';
     del.addEventListener('click', () => deleteStim(sheet, editItem));
     q('#asDeleteRow').appendChild(del);
   }
+
+  // READ THE FILE NOW. Android file pickers (Drive, Photos, "Recent") can hand
+  // over a reference that stops working a moment later, which gives "the
+  // requested file could not be read". Reading it into memory right after it is
+  // chosen, while the reference is fresh, avoids that. The bytes are kept on
+  // the sheet and used later by saveStim().
+  q('#asFile').addEventListener('change', async () => {
+    const f = q('#asFile').files[0]; sheet._audio = null; q('#asFileInfo').textContent = '';
+    if (!f) return;
+    stimLog.info('form', 'file chosen', { name: f.name, type: f.type, kb: Math.round(f.size / 1024) });
+    q('#asFileInfo').textContent = 'Reading file…';
+    try {
+      sheet._audio = { name: f.name, b64: await fileToBase64(f), kb: Math.round(f.size / 1024) };
+      q('#asFileInfo').textContent = '✓ ' + f.name + ' (' + sheet._audio.kb + ' KB) ready';
+      stimLog.info('form', 'file read ok', { kb: sheet._audio.kb });
+    } catch (e) {
+      stimLog.error('form', 'file read failed', e);
+      q('#asFileInfo').textContent = '';
+      status('Your phone would not let the app read that file. Try choosing it from "Files" or "Downloads" instead of Drive or Photos, or copy it to Downloads first.', true);
+    }
+  });
   q('#asCancel').addEventListener('click', () => sheet.remove());
   q('#asSave').addEventListener('click', () => saveStim(sheet, editItem));
 }
@@ -1006,45 +1118,47 @@ async function saveStim(sheet, editItem) {
   const q = (id) => sheet.querySelector(id);
   const status = makeStatus(sheet);
   const editing = !!editItem;
-  const file = q('#asFile').files[0];                       // undefined when no file was chosen.
+  const audio = sheet._audio;                               // { name, b64, kb } read when the file was chosen, or null.
   const title = q('#asTitle').value.trim();
+  stimLog.info('form', 'save pressed', { editing: editing, hasAudio: !!audio, title: title });
 
-  // --- Validation: stop early, with a message, before touching GitHub. ---
-  if (!editing && !file) return status('Choose an audio file first.', true);   // Audio is optional when editing.
+  // Validation: stop early, with a message, before touching GitHub.
+  if (!editing && !audio) {
+    // A chosen file that failed to read is reported at pick time; this is "nothing chosen".
+    return status(q('#asFile').files[0] ? 'The audio file could not be read. Please choose it again.' : 'Choose an audio file first.', true);
+  }
   if (!title) return status('Enter a title.', true);
-  if (file && file.size > 20 * 1024 * 1024) return status('That file is over 20 MB. Please use a shorter clip.', true);
-  const cfg = readCfg(sheet, status);                       // Owner/repo/branch/token (null + message if incomplete).
+  if (audio && audio.kb > 20 * 1024) return status('That file is over 20 MB. Please use a shorter clip.', true);
+  const cfg = readCfg(status);                              // Saved GitHub settings (null + message if incomplete).
   if (!cfg) return;
 
   // Disable Save so a double tap cannot start two uploads at once.
   const btn = q('#asSave'); btn.disabled = true;
   try {
-    // The text fields shared by add and edit. Empty emoji/group get defaults.
     const fields = { title: title, subtitle: q('#asSub').value.trim(), icon: q('#asIcon').value.trim() || '🔊', group: q('#asGroup').value.trim() || 'Misc Stims' };
     // File extension from the original name (".m4a", ".mp3"...), default ".m4a".
-    const ext = file ? (file.name.match(/\.[A-Za-z0-9]{2,4}$/) || ['.m4a'])[0].toLowerCase() : '';
+    const ext = audio ? (audio.name.match(/\.[A-Za-z0-9]{2,4}$/) || ['.m4a'])[0].toLowerCase() : '';
     let id, audioName, oldAudio = null;                     // oldAudio = file to delete after a replacement.
 
     if (editing) {
       id = editItem.id; audioName = editItem.audio;         // Keep the same id and (unless replaced) the same file.
-      if (file) {
+      if (audio) {
         // A replacement ALWAYS gets a brand-new filename (id + timestamp), so
         // phones can never keep serving the old recording from their cache.
         audioName = id + '-' + Date.now().toString(36) + ext;
         status('Uploading new audio…');
-        await ghPut(cfg, audioName, await fileToBase64(file), 'Replace audio for: ' + title);
-        oldAudio = editItem.audio;                        // Removed after stims.json is saved.
+        await ghPut(cfg, audioName, audio.b64, 'Replace audio for: ' + title);
+        oldAudio = editItem.audio;                          // Removed after stims.json is saved.
       }
     } else {
       // Unique id and filename from the title ("rock-on", then "rock-on-2", ...).
-      // The id is also the audio filename, so uniqueness protects both.
       const have = {}; (window.SOUNDBOARD_DATA || []).forEach(i => { have[i.id] = 1; });
       id = slugify(title); const base = id; let n = 2; while (have[id]) id = base + '-' + (n++);
       audioName = id + ext;
       status('Uploading audio…');
       // Never overwrite an existing file: ghGet returns null when it is absent.
       if (await ghGet(cfg, audioName)) throw new Error('A file named ' + audioName + ' already exists.');
-      await ghPut(cfg, audioName, await fileToBase64(file), 'Add audio: ' + audioName);
+      await ghPut(cfg, audioName, audio.b64, 'Add audio: ' + audioName);
     }
 
     // Read the CURRENT stims.json from GitHub (not the cached copy). The sha
@@ -1068,9 +1182,10 @@ async function saveStim(sheet, editItem) {
     await ghPut(cfg, 'stims.json', utf8ToB64(JSON.stringify(list, null, 2) + '\n'), (editing ? 'Edit stim: ' : 'Add stim: ') + title, cur && cur.sha);
 
     // Tidy up the replaced recording (best effort: a leftover file is harmless,
-    // so a failure here is ignored rather than reported as a save error).
+    // so a failure here is logged but not reported as a save error).
     if (oldAudio) {
-      try { const f = await ghGet(cfg, oldAudio); if (f) await ghDelete(cfg, oldAudio, f.sha, 'Remove old audio: ' + oldAudio); } catch (e) {}
+      try { const f = await ghGet(cfg, oldAudio); if (f) await ghDelete(cfg, oldAudio, f.sha, 'Remove old audio: ' + oldAudio); }
+      catch (e) { stimLog.warn('github', 'old audio not removed', e.message); }
       forgetCachedAudio(oldAudio);                          // And drop this phone's offline copy.
     }
 
@@ -1079,11 +1194,13 @@ async function saveStim(sheet, editItem) {
     if (editing) { Object.assign(editItem, fields, { audio: audioName }); }   // Update the live object in place.
     else { item.userStim = true; data.push(item); }                           // New: mark it editable and add it.
     if (window.renderSoundboard) window.renderSoundboard();
+    stimLog.info('form', editing ? 'stim updated' : 'stim added', { id: id, audio: audioName });
     sheet.remove();
     showToast((editing ? '✅ Updated "' : '✅ Added "') + title + '". Live for everyone in ~1 minute.', 4500);
   } catch (e) {
-    // Any failure above lands here: show it in red and let the user retry.
-    status('Failed: ' + (e && e.message ? e.message : e), true);
+    // Any failure above lands here: log it, show it in red, and let the user retry.
+    stimLog.error('form', 'save failed', e);
+    status('Failed: ' + (e && e.message ? e.message : e) + ' (View log in the dev panel for details.)', true);
     btn.disabled = false;
   }
 }
@@ -1095,8 +1212,9 @@ async function deleteStim(sheet, item) {
   const status = makeStatus(sheet);
   // confirm() is a native yes/no dialog; deleting is permanent for everyone.
   if (!confirm('Delete "' + item.title + '" for everyone? This cannot be undone.')) return;
-  const cfg = readCfg(sheet, status);
+  const cfg = readCfg(status);
   if (!cfg) return;
+  stimLog.info('form', 'delete pressed', { id: item.id });
   const btn = sheet.querySelector('#asDelete'); btn.disabled = true;
   try {
     status('Deleting…');
@@ -1112,7 +1230,7 @@ async function deleteStim(sheet, item) {
     // Then delete the recording itself (best effort: an orphan file is harmless).
     let leftover = false;
     try { const f = await ghGet(cfg, item.audio); if (f) await ghDelete(cfg, item.audio, f.sha, 'Delete audio: ' + item.audio); }
-    catch (e) { leftover = true; }
+    catch (e) { leftover = true; stimLog.warn('github', 'audio file not removed', e.message); }
     forgetCachedAudio(item.audio);                         // Drop this phone's offline copy too.
 
     // Forget it on this phone: data, favorites, recently played, screen.
@@ -1122,15 +1240,54 @@ async function deleteStim(sheet, item) {
     recents = recents.filter(r => r !== item.id); saveJSON(RECENT_KEY, recents);
     if (window.renderSoundboard) window.renderSoundboard();
     refreshExtras();
+    stimLog.info('form', 'stim deleted', { id: item.id, audioLeftover: leftover });
     sheet.remove();
     showToast(leftover ? '🗑️ Deleted (the audio file could not be removed from the repo)' : '🗑️ Deleted "' + item.title + '"', 4500);
   } catch (e) {
-    status('Failed: ' + (e && e.message ? e.message : e), true);
+    stimLog.error('form', 'delete failed', e);
+    status('Failed: ' + (e && e.message ? e.message : e) + ' (View log in the dev panel for details.)', true);
     btn.disabled = false;
   }
 }
 // Exposed so the pencil button (decorateCard) and the dev toolbar can open the form.
 window.openAddStim = openAddStim;
+
+/* ---- LOG VIEWER (dev mode) ---- */
+// Shows the debug log from log.js on screen, with Copy / Refresh / Clear.
+// The text is rendered with textContent, never innerHTML, so log contents can
+// never be interpreted as markup.
+function openLogViewer() {
+  const sheet = openSheet('logSheet',
+    '<div class="as-card"><h2>📋 Debug log</h2>' +
+    '<div class="as-hint" id="lgCount"></div>' +
+    '<pre id="lgText"></pre>' +
+    '<div id="lgStatus" role="status"></div>' +
+    '<div class="as-row"><button type="button" id="lgCopy">📋 Copy</button><button type="button" id="lgRefresh">🔄 Refresh</button></div>' +
+    '<div class="as-row"><button type="button" id="lgClear">🗑️ Clear log</button><button type="button" id="lgClose">Close</button></div></div>');
+  const q = (id) => sheet.querySelector(id), status = makeStatus(sheet, '#lgStatus');
+  const draw = () => {
+    const n = stimLog.entries().length;
+    q('#lgCount').textContent = n + ' entries (newest at the bottom)';
+    q('#lgText').textContent = stimLog.text();
+    const pre = q('#lgText'); pre.scrollTop = pre.scrollHeight;       // Jump to the newest line.
+  };
+  draw();
+  q('#lgRefresh').addEventListener('click', draw);
+  q('#lgClear').addEventListener('click', () => { stimLog.clear(); draw(); status('Log cleared.'); });
+  q('#lgClose').addEventListener('click', () => sheet.remove());
+  // Copy: the modern clipboard API needs https (GitHub Pages is). If it is
+  // refused, select the text so the user can long-press and copy by hand.
+  q('#lgCopy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(stimLog.text()); status('Copied ✓ Paste it into a message.'); }
+    catch (e) {
+      const r = document.createRange(); r.selectNodeContents(q('#lgText'));
+      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      status('Could not copy automatically. The text is selected: long-press it and choose Copy.', true);
+    }
+  });
+}
+window.openLogViewer = openLogViewer;
+
 
 // Start loading user stims once the page is ready (after app.js has defined
 // renderSoundboard, so wait for the load event).

@@ -646,9 +646,41 @@ body.dev-mode .edit-pen.dev-only { display: flex !important; }   /* Flex centres
 }
 #asDelete:disabled { opacity: 0.5; }
 
-/* --- TOKEN CONTROLS (inside the form's "GitHub settings") -----------------------
-   "Show/Hide" reveals what was pasted; "Clear saved token" removes the token from
-   this phone only. They share the row layout of the other form buttons (.as-row
-   button), so only the clear button needs its own warning colours. */
-#asShowToken, #asClearToken { font-size: 0.8rem; padding: 10px; }
-#asClearToken { background: #450a0a; border-color: #f87171; color: #fecaca; }
+/* --- SEPARATE SCREENS: GitHub settings + debug log (extras.js Part 6) ---------
+   These reuse the Add-stim sheet look (.as-card, .as-row, .as-hint, ...), so
+   only what is different needs rules here. Stacking order, lowest to highest:
+   add/edit sheet 3500 < settings sheet 3600 < log sheet 3700, so the settings
+   screen opens ON TOP of the add form and the log can be opened from anywhere. */
+#ghSettingsSheet, #logSheet {
+  position: fixed; inset: 0;
+  background: rgba(8, 6, 20, 0.92);
+  display: flex; align-items: flex-start; justify-content: center;
+  overflow-y: auto; padding: 16px 12px 40px;
+}
+#ghSettingsSheet { z-index: 3600; }
+#logSheet { z-index: 3700; }
+#gsStatus, #lgStatus { min-height: 1.1em; font-size: 0.85rem; font-weight: 700; color: #34d399; }
+#gsStatus.bad, #lgStatus.bad { color: #f87171; }          /* Errors in red, like the form. */
+#gsToken, #gsOwner, #gsRepo, #gsBranch {
+  background: #0b0f19; color: #f8fafc; border: 1px solid #334155; border-radius: 10px;
+  padding: 10px 12px; font-size: 1rem; width: 100%; min-width: 0;
+  user-select: text;                                      /* The global reset blocks selecting/typing. */
+}
+#gsShow, #gsClear, #gsTest, #gsSave, #gsClose, #lgCopy, #lgRefresh, #lgClear, #lgClose {
+  flex: 1; padding: 11px; border-radius: 12px; font-weight: 800; text-align: center;
+  background: #1e293b; border: 1px solid #334155; font-size: 0.85rem;
+}
+#gsSave { background: #2563eb; border-color: #2563eb; color: #fff; }
+#gsClear, #lgClear { background: #450a0a; border-color: #f87171; color: #fecaca; }
+/* The log text: monospace, wraps long lines, scrolls inside its own box. */
+#lgText {
+  background: #0b0f19; border: 1px solid #334155; border-radius: 10px; padding: 10px;
+  font-size: 0.68rem; line-height: 1.35; color: #cbd5e1;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 55vh; overflow-y: auto;
+  user-select: text;                                      /* So it can be long-press selected and copied. */
+}
+/* The one-line "owner/repo - token saved (...abcd)" summary in the add form. */
+.as-ghline { display: flex; flex-direction: column; gap: 8px; font-size: 0.75rem; color: #94a3b8; word-break: break-word; }
+.as-ghline button { padding: 10px; border-radius: 10px; background: #1e293b; border: 1px solid #334155; font-weight: 700; font-size: 0.8rem; text-align: center; color: #e2e8f0; }
+#asFileInfo:empty { display: none; }                      /* No empty gap when nothing is chosen. */

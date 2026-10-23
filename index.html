@@ -15,7 +15,7 @@
   CACHE-BUSTING REMINDER: the "?v=N" on the stylesheet and script URLs forces
   phones to re-download a file. Whenever you edit styles.css / data.js /
   synth.js / app.js, bump THAT file's ?v= number below, AND bump CACHE_NAME in
-  sw.js. (Current: styles v9, data v10, synth v7, extras v8, app v11, sw cache v21.)
+  sw.js. (Current: styles v10, log v1, data v10, synth v7, extras v9, app v12, sw cache v22.)
   ============================================================================
 -->
 <html lang="en"> <!-- lang helps screen readers and translation tools -->
@@ -51,7 +51,7 @@
 
   <!-- External Stylesheet -->
   <!-- All visual styling lives in styles.css. Bump ?v=3 when that file changes. -->
-  <link rel="stylesheet" href="./styles.css?v=9">
+  <link rel="stylesheet" href="./styles.css?v=10">
 </head>
 <body>
 
@@ -123,9 +123,10 @@
          2. synth.js defines window.playProceduralSound
          3. app.js   uses both of the above to build the UI and play sounds
        Each ?v=N is a cache-buster: bump it when that file changes. -->
+  <script src="./log.js?v=1"></script>
   <script src="./data.js?v=10"></script>
   <script src="./synth.js?v=7"></script>
-  <script src="./extras.js?v=8"></script>
-  <script src="./app.js?v=11"></script>
+  <script src="./extras.js?v=9"></script>
+  <script src="./app.js?v=12"></script>
 </body>
 </html>

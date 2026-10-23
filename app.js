@@ -398,7 +398,7 @@ function playAudioSequence(item) {
     preloaded = null;
     currentAudio = audio;         // Remember it so the next tap can stop it.
     audio.onended = next;         // Finished normally -> schedule the next clip.
-    audio.onerror = failed;       // Load/decode failure (e.g. 404) -> use the stand-in.
+    audio.onerror = () => { if (window.stimLog) stimLog.warn("audio", "sequence clip failed", { file: clips[index] }); failed(); };       // Load/decode failure (e.g. 404) -> use the stand-in.
 
     // Start fetching the NEXT clip right now, in the background.
     if (index + 1 < clips.length) {
@@ -488,7 +488,7 @@ function triggerStim(item, el) {
 
     // ONERROR (protected): the file failed to load -> play the full synth
     // version for this id, INCLUDING speech (second argument false = do not skip vocals).
-    currentAudio.onerror = () => { if (window.playProceduralSound) window.playProceduralSound(item.id, false); };
+    currentAudio.onerror = () => { if (window.stimLog) stimLog.warn("audio", "file failed, using synth", { id: item.id, file: item.audio }); if (window.playProceduralSound) window.playProceduralSound(item.id, false); };
     // Real recording finished and nothing is chained after it -> clear the
     // playing state. (appendProcedural overrides onended just below; the
     // watchdog timer clears the state for those.)
