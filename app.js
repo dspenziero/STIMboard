@@ -15,7 +15,7 @@
      3. The audio sequencer: now-playing tracking, stopAllAudio() (tap-to-stop),
         playAudioSequence() and triggerStim()
      4. The DOM builder: renderSoundboard() turns SOUNDBOARD_DATA into buttons
-        (re-runnable: dev mode, search and filters call it again)
+        (re-runnable: dev mode, search and the favorites filter call it again)
 
    HOOKS INTO extras.js (all optional; each call is guarded with "if (window.x)"
    so the soundboard still works if extras.js is missing)
@@ -533,8 +533,8 @@ function renderSoundboard() {
   //   1. item.active is true (the master on/off switch in data.js), AND
   //   2. it is not birthdayOnly, OR it is the real birthday, OR dev mode is on
   //      (this is how the birthday card appears/disappears), AND
-  //   3. it passes the dev-mode search / favorites filter (window.stimFilter,
-  //      which always returns true for normal users).
+  //   3. it passes the search / favorites-only filter (window.stimFilter, which
+  //      always lets the big top cards through and filters the grid buttons).
   // isDevMode()/isBirthdayNow() come from extras.js (loaded before this file);
   // the "? ... : false" fallbacks keep the app working if it is missing.
   const dev = window.isDevMode ? window.isDevMode() : false;
@@ -564,7 +564,7 @@ function renderSoundboard() {
       heroBtn.addEventListener('click', () => triggerStim(item, heroBtn));
       // data-id lets extras.js find this card later (e.g. to update its star).
       heroBtn.dataset.id = item.id;
-      // extras.js hook: adds the progress bar (and a dev-only favorite star).
+      // extras.js hook: adds the progress bar to this card.
       if (window.decorateCard) window.decorateCard(heroBtn, item);
       heroSlot.appendChild(heroBtn);
     } else if (item.type === 'featured' && featuredSlot) {
@@ -575,7 +575,7 @@ function renderSoundboard() {
       featBtn.addEventListener('click', () => triggerStim(item, featBtn));
       // data-id lets extras.js find this card later (e.g. to update its star).
       featBtn.dataset.id = item.id;
-      // extras.js hook: adds the progress bar (and a dev-only favorite star).
+      // extras.js hook: adds the progress bar to this card.
       if (window.decorateCard) window.decorateCard(featBtn, item);
       featuredSlot.appendChild(featBtn);
     } else if (item.type === 'birthday' && featuredSlot) {
@@ -586,7 +586,7 @@ function renderSoundboard() {
       bdayBtn.addEventListener('click', () => triggerStim(item, bdayBtn));
       // data-id lets extras.js find this card later (e.g. to update its star).
       bdayBtn.dataset.id = item.id;
-      // extras.js hook: adds the progress bar (and a dev-only favorite star).
+      // extras.js hook: adds the progress bar to this card.
       if (window.decorateCard) window.decorateCard(bdayBtn, item);
       featuredSlot.appendChild(bdayBtn);
     } else {
@@ -604,6 +604,18 @@ function renderSoundboard() {
   // Without a grid mount point there is nowhere to put the grouped items.
   if (!gridContainer) return;
 
+  // True while a search term or favorites-only filter is narrowing the list.
+  const filtering = window.stimFilterActive ? window.stimFilterActive() : false;
+
+  // Nothing matched: say so, instead of leaving an empty page under the search box.
+  if (filtering && Object.keys(groupedItems).length === 0) {
+    const none = document.createElement('p');
+    none.className = 'no-results';
+    none.textContent = 'No stims match. Try a different search, or turn off Favs.';
+    gridContainer.appendChild(none);
+    return;
+  }
+
   // Build one section per group, in the order the groups first appeared.
   Object.keys(groupedItems).forEach(groupName => {
     const groupData = groupedItems[groupName];
@@ -619,8 +631,9 @@ function renderSoundboard() {
       gridBtn.innerHTML = `<span class="stim-icon">${item.icon || "🔊"}</span><div class="stim-text"><span class="stim-title">${item.title}</span><span class="stim-sub">${item.subtitle}</span></div>`;
       gridBtn.addEventListener('click', () => triggerStim(item, gridBtn));
       gridBtn.dataset.id = item.id;
-      // extras.js hook: adds the favorite star (dev mode only) and the
-      // progress bar. Safe no-op if extras.js is missing.
+      // extras.js hook: adds the favorite star, the progress bar and (for stims
+      // added through the form, in dev mode) the edit pencil. Safe no-op if
+      // extras.js is missing.
       if (window.decorateCard) window.decorateCard(gridBtn, item);
       grid.appendChild(gridBtn);
     });
@@ -630,6 +643,9 @@ function renderSoundboard() {
       // to open/close it; the browser handles it and CSS styles the arrow).
       const details = document.createElement('details');
       details.className = 'collapsible-group';
+      // While filtering, open the group so its matches are visible. Without
+      // this, a match inside a closed accordion would look like "no results".
+      if (filtering) details.open = true;
       const summary = document.createElement('summary');
       // Shows "Group Name (count)" plus the rotating arrow.
       summary.innerHTML = `<span>${groupName} (${groupData.items.length})</span><span class="collapse-arrow">▼</span>`;
@@ -650,7 +666,7 @@ function renderSoundboard() {
   });
 }
 
-// Expose the builder so extras.js can re-render (dev mode, search, filters).
+// Expose the builder so extras.js can re-render (dev mode, search, favorites filter).
 window.renderSoundboard = renderSoundboard;
 window.triggerStim = triggerStim;
 window.stopAllAudio = stopAllAudio;

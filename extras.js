@@ -26,10 +26,24 @@
 
    PARTS, in file order
      1. Toast, dev mode, the 8-second logo hold, birthday helpers
-     2. Favorites, recently played, search + filter, progress bar, toolbar
+     2. Favorites, recently played, search + filter, progress bar, browse bar
      3. Countdown card, birthday intro (fireworks + fanfare), dev buttons
      4. Audio preloading
    ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   SAFETY NET: THE DEBUG LOG
+   Code below calls stimLog (defined by log.js, which loads first). If log.js is
+   missing or failed to load (for example it was not uploaded), this silent
+   stand-in stops every stimLog call from throwing and breaking the forms.
+   -------------------------------------------------------------------------- */
+if (!window.stimLog) {
+  const none = () => {};
+  window.stimLog = Object.assign(none, {
+    info: none, warn: none, error: none, clear: none, entries: () => [],
+    text: () => 'log.js did not load, so there is no log. Check that log.js was uploaded and is listed in index.html.'
+  });
+}
 
 /* --------------------------------------------------------------------------
    PART 1A. TOAST
@@ -160,9 +174,11 @@ wireLogoHold();
 /* ==========================================================================
    PART 2. FAVORITES, RECENTLY PLAYED, SEARCH + FILTER, PROGRESS BAR
    --------------------------------------------------------------------------
-   The code for all of these is always present, but every piece of their UI
-   carries the class 'dev-only'. styles.css hides '.dev-only' unless <body>
-   also has the class 'dev-mode', so normal users never see them.
+   These are normal features, visible to everyone: a search box with a
+   favorites-only toggle and Favorites / Recently played chip rows (together the
+   "browse bar" between the featured cards and the grids), plus a favorite star
+   on every grid card. Only the edit pencil and the developer panel stay
+   dev-only (class 'dev-only', hidden by styles.css unless <body> has 'dev-mode').
    ========================================================================== */
 
 /* ---- Small safe wrappers around localStorage (it stores strings only) ---- */
@@ -204,27 +220,39 @@ const RECENT_KEY = 'stimboard-recent';
 const RECENT_MAX = 6;                                  // How many ids to remember.
 let recents = loadJSON(RECENT_KEY, []);
 
+// True only while a quick-list chip's click handler is running (see
+// renderQuickLists). It stops recordPlay from rebuilding the chip rows while a
+// chip is being tapped, because that would replace the very button under the finger.
+let chipTap = false;
+
 // Called by app.js's triggerStim() on every tap (that is why it is on window).
 window.recordPlay = function (item) {
-  // Ignore bad input, and skip the birthday card (it is a one-off, not a "stim").
-  if (!item || !item.id || item.type === 'birthday') return;
+  // Ignore bad input, and skip the big top cards (CASE!, the trumpet, the
+  // birthday card): they are always on screen, so listing them would only
+  // crowd out the stims that are worth finding again.
+  if (!item || !item.id || item.type) return;
   // Put this id first, drop any older copy of it, keep only the newest 6.
   recents = [item.id].concat(recents.filter(r => r !== item.id)).slice(0, RECENT_MAX);
   saveJSON(RECENT_KEY, recents);
-  renderQuickLists();  // Update the "Recently played" row straight away.
+  // Redraw the row straight away, EXCEPT while a chip itself is being tapped
+  // (see chipTap above). The saved order is already updated either way, and a
+  // skipped redraw simply appears at the next one.
+  if (!chipTap) renderQuickLists();
 };
 
 /* ---- SEARCH + FILTER ---- */
 
-// The current filter settings, edited by the toolbar controls further down.
+// The current filter settings, edited by the browse bar controls further down.
 //   text     : what is typed in the search box
 //   favsOnly : true when the "Favs" toggle is on
 const filterState = { text: '', favsOnly: false };
 
 // app.js calls this for every item while rendering; returning false hides it.
 window.stimFilter = function (item) {
-  // Normal users never get filtering, even if a stale search term exists.
-  if (!isDevMode()) return true;
+  // The big top cards (CASE!, the trumpet, the birthday card) have a 'type'.
+  // They always stay visible so the page does not jump around while searching;
+  // only the ordinary grid buttons (no 'type') are filtered.
+  if (item.type) return true;
   // Favorites-only mode: hide everything that is not starred.
   if (filterState.favsOnly && !isFav(item.id)) return false;
   // Case-insensitive search text. An empty search matches everything.
@@ -233,6 +261,11 @@ window.stimFilter = function (item) {
   // Search the title, subtitle and group name together as one string.
   return ((item.title || '') + ' ' + (item.subtitle || '') + ' ' + (item.group || '')).toLowerCase().indexOf(q) !== -1;
 };
+
+// True while a search term or the favorites-only toggle is narrowing the list.
+// app.js uses it to open collapsed groups (so matches are not hidden inside a
+// closed accordion) and to show a "no matches" message.
+window.stimFilterActive = function () { return !!filterState.text.trim() || filterState.favsOnly; };
 
 /* ---- PROGRESS BAR: a thin bar along the bottom edge of the playing card ---- */
 
@@ -265,11 +298,14 @@ window.decorateCard = function (btn, item) {
   btn.style.position = btn.style.position || 'relative';
   // Every card gets a progress bar (width 0 until a sound plays).
   const bar = document.createElement('div'); bar.className = 'progress-bar'; btn.appendChild(bar);
-  if (item.type === 'birthday') return;       // No favorite star on the birthday card.
+  // Only the ordinary grid buttons get a star. The big top cards (CASE!, the
+  // trumpet, the birthday card) are always on screen already, and their layouts
+  // have no free corner for it.
+  if (item.type) return;
   // The star is a <span>, NOT a <button>: buttons cannot be nested in buttons.
   const star = document.createElement('span');
-  // 'dev-only' hides it for normal users; 'on' colours it gold when favorited.
-  star.className = 'fav-star dev-only' + (isFav(item.id) ? ' on' : '');
+  // 'on' colours it gold when favorited.
+  star.className = 'fav-star' + (isFav(item.id) ? ' on' : '');
   star.textContent = isFav(item.id) ? '★' : '☆';
   star.setAttribute('role', 'button'); star.setAttribute('aria-label', 'Toggle favorite');
   // stopPropagation() keeps the click from also reaching the card underneath,
@@ -293,15 +329,16 @@ window.decorateCard = function (btn, item) {
 // Finds an ACTIVE item by id (inactive/missing ones are silently dropped).
 function findItem(id) { return (window.SOUNDBOARD_DATA || []).find(i => i.id === id && i.active); }
 
-// Rebuilds both rows inside <div id="quickLists"> (created by buildToolbar).
+// Rebuilds both rows inside <div id="quickLists"> (created by buildBrowseBar).
 function renderQuickLists() {
   const host = document.getElementById('quickLists');
-  if (!host) return;                          // Toolbar not built yet.
+  if (!host) return;                          // Browse bar not built yet.
   host.innerHTML = '';                        // Start from a clean slate.
   // Two rows: [heading, list of ids]. Destructured straight into the loop.
   [['⭐ Favorites', favs], ['🕘 Recently played', recents]].forEach(([label, ids]) => {
-    // Turn ids into real items and drop any that no longer exist.
-    const items = ids.map(findItem).filter(Boolean);
+    // Turn ids into real items and drop any that no longer exist, plus the big
+    // top cards (they have no star, so an old favorite could never be removed).
+    const items = ids.map(findItem).filter(i => i && !i.type);
     if (!items.length) return;                // Empty row: show nothing at all.
     const row = document.createElement('div'); row.className = 'quick-row';
     const h = document.createElement('div'); h.className = 'quick-title'; h.textContent = label; row.appendChild(h);
@@ -310,50 +347,77 @@ function renderQuickLists() {
       const chip = document.createElement('button');
       chip.className = 'quick-chip'; chip.textContent = (it.icon || '🔊') + ' ' + it.title;
       // Tapping a chip plays the stim exactly like tapping its real button.
-      chip.addEventListener('click', () => window.triggerStim(it, chip));
+      // chipTap keeps recordPlay from rebuilding these rows under the finger.
+      chip.addEventListener('click', () => { chipTap = true; try { window.triggerStim(it, chip); } finally { chipTap = false; } });
       chips.appendChild(chip);
     });
     row.appendChild(chips); host.appendChild(row);
   });
 }
 
-/* ---- DEV TOOLBAR: search box + favorites-only toggle + quick lists ---- */
+/* ---- BROWSE BAR: search box + favorites-only toggle + quick lists ---- */
+// A normal feature for everyone. It sits between the featured cards and the
+// grids, OUTSIDE the three mount points that renderSoundboard() clears, so
+// typing in the search box is never interrupted by the re-render it triggers.
 
-// Builds the toolbar once and inserts it ABOVE the hero card.
-function buildToolbar() {
-  if (document.getElementById('devToolbar')) return;   // Already built: do nothing.
-  const anchor = document.getElementById('heroSlot');
+// Builds the browse bar once and inserts it directly above the grids.
+function buildBrowseBar() {
+  if (document.getElementById('browseBar')) return;     // Already built: do nothing.
+  const anchor = document.getElementById('gridContainer');
   if (!anchor) return;
-  const wrap = document.createElement('div'); wrap.id = 'devToolbar'; wrap.className = 'dev-only';
+  const wrap = document.createElement('div'); wrap.id = 'browseBar';
   // The markup is a fixed string (no user data), so innerHTML is safe here.
-  // #devButtons is filled by buildDevButtons(); #quickLists by renderQuickLists().
-  wrap.innerHTML = '<div class="dev-badge">🛠️ DEV MODE</div>' +
-    '<div class="search-row"><input id="searchBox" type="search" placeholder="Search stims…" autocomplete="off">' +
-    '<button id="favFilterBtn" type="button">☆ Favs</button></div>' +
-    '<div id="devButtons"></div><div id="quickLists"></div>';
-  // Insert directly before #heroSlot, inside the same parent column.
+  // #quickLists is filled by renderQuickLists(). The clear button starts hidden.
+  wrap.innerHTML = '<div class="search-row">' +
+    '<input id="searchBox" type="search" placeholder="Search stims…" autocomplete="off" aria-label="Search stims">' +
+    '<button id="searchClear" type="button" aria-label="Clear search" hidden>✕</button>' +
+    '<button id="favFilterBtn" type="button" aria-pressed="false">☆ Favs</button></div>' +
+    '<div id="quickLists"></div>';
+  // Insert directly before #gridContainer, inside the same parent column.
   anchor.parentNode.insertBefore(wrap, anchor);
 
-  // SEARCH: on every keystroke store the text and re-render the soundboard,
-  // which re-runs window.stimFilter for every item.
   const box = wrap.querySelector('#searchBox');
-  box.addEventListener('input', () => { filterState.text = box.value; window.renderSoundboard(); });
+  const clear = wrap.querySelector('#searchClear');
+  const favBtn = wrap.querySelector('#favFilterBtn');
+  const redraw = () => { if (window.renderSoundboard) window.renderSoundboard(); };
+
+  // SEARCH: on every keystroke store the text, show/hide the clear button, and
+  // re-render the soundboard, which re-runs window.stimFilter for every item.
+  box.addEventListener('input', () => { filterState.text = box.value; clear.hidden = !box.value; redraw(); });
+
+  // CLEAR (the x): empties the search, brings every stim back, keeps the keyboard up.
+  clear.addEventListener('click', () => { box.value = ''; filterState.text = ''; clear.hidden = true; redraw(); box.focus(); });
 
   // FAVORITES-ONLY toggle: flips the flag, updates the label/colour, re-renders.
-  const favBtn = wrap.querySelector('#favFilterBtn');
   favBtn.addEventListener('click', () => {
     filterState.favsOnly = !filterState.favsOnly;
     favBtn.textContent = filterState.favsOnly ? '★ Favs' : '☆ Favs';
     favBtn.classList.toggle('on', filterState.favsOnly);
-    window.renderSoundboard();
+    favBtn.setAttribute('aria-pressed', String(filterState.favsOnly));
+    redraw();
   });
+}
+
+/* ---- DEV TOOLBAR: badge + test buttons (dev mode only) ---- */
+
+// Builds the developer panel once and inserts it ABOVE the hero card. It has the
+// class 'dev-only', so styles.css hides it unless developer mode is on.
+function buildDevToolbar() {
+  if (document.getElementById('devToolbar')) return;    // Already built: do nothing.
+  const anchor = document.getElementById('heroSlot');
+  if (!anchor) return;
+  const wrap = document.createElement('div'); wrap.id = 'devToolbar'; wrap.className = 'dev-only';
+  // #devButtons is filled by buildDevButtons() (Part 3).
+  wrap.innerHTML = '<div class="dev-badge">🛠️ DEV MODE</div><div id="devButtons"></div>';
+  anchor.parentNode.insertBefore(wrap, anchor);
 }
 
 // Redraws everything this file owns. Called at start-up and after any change
 // to dev mode or favorites. Each optional piece is guarded because it is
 // defined later in the file (Part 3) or may be absent.
 function refreshExtras() {
-  buildToolbar();
+  buildDevToolbar();
+  buildBrowseBar();
   renderQuickLists();
   if (window.renderCountdown) window.renderCountdown();
   if (window.buildDevButtons) window.buildDevButtons();
@@ -631,11 +695,17 @@ window.buildDevButtons = function () {
   mk('⚙️ GitHub settings', () => window.openGhSettings && window.openGhSettings());
   // The persistent debug log from log.js, with copy / clear.
   mk('📋 View log', () => window.openLogViewer && window.openLogViewer());
+  // Clears the service worker and offline caches (NOT your token or favorites)
+  // and reloads. Use it when the phone seems to show old code.
+  mk('♻️ Force refresh app', () => forceRefresh());
   mk('🎆 Test birthday intro', playBirthdayIntro);
   // 2. Forget that the intro was shown today, so the gate appears again on next launch.
   mk('🔁 Reset intro (show again)', () => { try { localStorage.removeItem(INTRO_KEY); } catch (e) {} showToast('Intro will show again on the next birthday launch'); });
   // 3. Emergency silence (same function tap-to-stop uses).
   mk('🛑 Stop all audio', () => window.stopAllAudio && window.stopAllAudio());
+  // A line showing exactly which file versions are running (see buildInfo above).
+  const info = document.createElement('div'); info.className = 'dev-info'; info.textContent = 'Checking version…'; host.appendChild(info);
+  buildInfo().then(t => { info.textContent = t; });
 };
 
 /* ---- START-UP ---- */
@@ -720,6 +790,46 @@ setTimeout(() => {
   (window.SOUNDBOARD_DATA || []).forEach(it => (it.audioSequence || []).forEach(n => { names[n] = 1; }));
   Object.keys(names).forEach(measureTail);
 }, 1500);
+
+/* ---- BUILD INFO + FORCE REFRESH (dev mode) ----------------------------------
+   For the question "am I running the newest code?". buildInfo() reports the
+   ?v= numbers of the files that were ACTUALLY loaded, the service-worker cache
+   name, and whether the service worker controls this page. If those numbers are
+   older than what you uploaded, the phone is still on a stale copy.
+   forceRefresh() fixes that WITHOUT losing your saved token, favorites or dev
+   mode: it unregisters the service worker, deletes every cache, and reloads. */
+async function buildInfo() {
+  try {
+    // Pulls "name vN" out of a URL such as ".../extras.js?v=9" (null if no match).
+    const ver = (u, ext) => { const m = new RegExp('([\\w-]+)\\.' + ext + '\\?v=(\\d+)').exec(u || ''); return m ? m[1] + ' v' + m[2] : null; };
+    const files = [].concat(
+      Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map(l => ver(l.href, 'css')),
+      Array.from(document.scripts).map(s => ver(s.src, 'js'))
+    ).filter(Boolean);
+    let cache = 'no cache API';
+    if (window.caches) cache = (await caches.keys()).join(', ') || 'none';
+    const sw = ('serviceWorker' in navigator) ? (navigator.serviceWorker.controller ? 'active' : 'not controlling') : 'unsupported';
+    return 'Running: ' + files.join(', ') + ' | cache: ' + cache + ' | service worker: ' + sw;
+  } catch (e) { return 'build info unavailable'; }
+}
+
+async function forceRefresh() {
+  stimLog.info('app', 'force refresh requested');
+  showToast('♻️ Refreshing… the app will reload', 2500);
+  // 1. Remove the service worker, so nothing can answer requests from old files.
+  try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); }
+  catch (e) { stimLog.warn('app', 'unregister failed', e); }
+  // 2. Delete every offline cache. (localStorage is deliberately left alone.)
+  try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); }
+  catch (e) { stimLog.warn('app', 'cache clear failed', e); }
+  // 3. Reload after a short pause so the toast can be read. The page then loads
+  //    fresh and app.js registers a new service worker.
+  setTimeout(() => location.reload(), 600);
+}
+window.forceRefresh = forceRefresh;
+
+// Record what is running at the start of every session, so a copied log shows it.
+buildInfo().then(t => stimLog.info('app', 'build', t));
 
 /* ==========================================================================
    PART 6. USER STIMS: load stims.json + add / edit / delete form (dev mode)

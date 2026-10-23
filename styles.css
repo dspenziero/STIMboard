@@ -419,11 +419,12 @@ footer {
    EXTRAS: styles for everything added by extras.js
    --------------------------------------------------------------------------
    Sections, in order:
-     - .dev-only visibility rules (the switch behind developer mode)
+     - .dev-only visibility rules (developer mode: the dev panel and the edit pencil)
      - toast message
      - now-playing look + progress bar
-     - favorite star
-     - dev toolbar, search box, quick-list chips
+     - favorite star (everyone)
+     - browse bar: search box, Favs toggle, quick-list chips (everyone)
+     - dev panel (developer mode only)
      - countdown card
      - birthday gate + full-screen intro overlay
      - reduced-motion accessibility override
@@ -437,9 +438,9 @@ footer {
 .dev-only { display: none !important; }
 /* Generic dev-only elements become normal blocks when dev mode is on... */
 body.dev-mode .dev-only { display: block !important; }
-/* ...but the star needs flex (to centre its glyph) and the toolbar needs flex
-   (column layout). These more specific selectors win over the generic rule. */
-body.dev-mode .fav-star.dev-only { display: flex !important; }
+/* ...but the developer panel needs flex (column layout). This more specific
+   selector wins over the generic rule. (The edit pencil has its own rule below.)
+   The favorite star, search box and quick lists are NOT dev-only any more. */
 body.dev-mode #devToolbar.dev-only { display: flex !important; }
 
 /* --- TOAST -------------------------------------------------------------------
@@ -491,10 +492,10 @@ body.dev-mode #devToolbar.dev-only { display: flex !important; }
 .hero-card, .featured-card, .birthday-card, .stim-card { position: relative; overflow: hidden; }
 
 /* --- FAVORITE STAR ----------------------------------------------------------
-   A tiny tappable <span> in a card's top-right corner. Only visible in dev
-   mode (it also carries 'dev-only'). 'align-items/justify-content' centre the
-   glyph; 'display:flex' itself comes from the dev-mode rule above. */
+   A tiny tappable <span> in the top-right corner of every grid card, visible to
+   everyone. 'display:flex' with the two centring properties centres the glyph. */
 .fav-star {
+  display: flex;
   position: absolute; top: 6px; right: 8px;
   width: 28px; height: 28px;      /* Big enough to hit with a thumb. */
   align-items: center; justify-content: center;
@@ -505,9 +506,19 @@ body.dev-mode #devToolbar.dev-only { display: flex !important; }
 }
 .fav-star.on { color: #fbbf24; }  /* Gold when favorited. */
 
-/* --- DEV TOOLBAR -------------------------------------------------------------
-   The dashed gold panel above the hero card: badge, search row, test buttons
-   and the Favorites/Recently-played chip rows. */
+/* --- BROWSE BAR (everyone) ---------------------------------------------------
+   Search box, clear button and Favs toggle, with the Favorites / Recently played
+   chip rows below. Sits between the featured cards and the grids. */
+#browseBar { display: flex; flex-direction: column; gap: 10px; }
+/* The x inside the search row. 'hidden' (set by JS) hides it while the box is empty. */
+#searchClear {
+  background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+  padding: 8px 12px; font-size: 0.85rem; font-weight: 700; color: #e2e8f0;
+}
+#searchClear[hidden] { display: none; }  /* An explicit display rule would otherwise beat the hidden attribute. */
+
+/* --- DEV PANEL (developer mode only) ------------------------------------------
+   The dashed gold panel above the hero card: the badge and the test buttons. */
 #devToolbar {
   flex-direction: column; gap: 10px;     /* display:flex is applied by the dev-mode rule. */
   background: #111827;
@@ -633,12 +644,15 @@ body.dev-mode #devToolbar.dev-only { display: flex !important; }
    The pencil sits left of the favorite star on stims added through the form.
    Like the star it carries 'dev-only', so it is invisible outside dev mode. */
 .edit-pen {
+  display: none;                                       /* Hidden unless dev mode (rule below). */
   position: absolute; top: 6px; right: 38px;           /* 28px star + 8px edge + 2px gap. */
   width: 28px; height: 28px;
   align-items: center; justify-content: center;
   font-size: 1rem; cursor: pointer; z-index: 2;
 }
 body.dev-mode .edit-pen.dev-only { display: flex !important; }   /* Flex centres the glyph, like the star. */
+/* "No matches" message shown in place of the grids while a search finds nothing. */
+.no-results { text-align: center; color: #94a3b8; font-size: 0.9rem; padding: 18px 8px; }
 /* The red delete button at the bottom of the edit form. */
 #asDelete {
   width: 100%; padding: 12px; border-radius: 12px; font-weight: 800; text-align: center;
@@ -684,3 +698,8 @@ body.dev-mode .edit-pen.dev-only { display: flex !important; }   /* Flex centres
 .as-ghline { display: flex; flex-direction: column; gap: 8px; font-size: 0.75rem; color: #94a3b8; word-break: break-word; }
 .as-ghline button { padding: 10px; border-radius: 10px; background: #1e293b; border: 1px solid #334155; font-weight: 700; font-size: 0.8rem; text-align: center; color: #e2e8f0; }
 #asFileInfo:empty { display: none; }                      /* No empty gap when nothing is chosen. */
+
+/* --- BUILD INFO LINE (dev toolbar) -------------------------------------------
+   The "Running: extras v10, ..." line under the dev buttons. flex: 1 0 100%
+   makes it take a full row inside the wrapping button container. */
+.dev-info { flex: 1 0 100%; font-size: 0.68rem; line-height: 1.35; color: #94a3b8; word-break: break-word; user-select: text; }
